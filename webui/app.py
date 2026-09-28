@@ -30,6 +30,12 @@ async def index() -> FileResponse:
     return FileResponse(Path(__file__).parent / "static" / "index.html")
 
 
+@app.get("/read/{filename}")
+async def read_paper(filename: str) -> FileResponse:
+    get_paper_path(filename)
+    return FileResponse(Path(__file__).parent / "static" / "reader.html")
+
+
 @app.get("/api/papers")
 async def list_papers() -> list[dict[str, str | int]]:
     papers = sorted(UPLOAD_DIR.glob("*.pdf"), key=lambda path: path.stat().st_mtime, reverse=True)

@@ -34,9 +34,16 @@ function renderPapers(papers) {
     openButton.className = "paper-button";
     openButton.textContent = paper.name;
     openButton.addEventListener("click", () => openPaper(paper.filename));
+    const readLink = document.createElement("a");
+    readLink.className = "read-link";
+    readLink.href = `/read/${encodeURIComponent(paper.filename)}`;
+    readLink.textContent = "阅读";
     const size = document.createElement("span");
     size.textContent = `${paper.size_kb} KB`;
-    item.append(openButton, size);
+    const actions = document.createElement("div");
+    actions.className = "paper-actions";
+    actions.append(readLink, size);
+    item.append(openButton, actions);
     paperList.append(item);
   });
 }

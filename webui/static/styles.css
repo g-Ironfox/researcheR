@@ -46,6 +46,9 @@ li { display: flex; align-items: center; justify-content: space-between; gap: 20
 li:not(.empty):hover { background: #edf3f1; }
 .paper-button { min-width: 0; padding: 0; border: 0; background: transparent; color: var(--ink); font-size: 14px; font-weight: 400; overflow-wrap: anywhere; text-align: left; }
 .paper-button:hover { background: transparent; color: var(--accent); text-decoration: underline; }
+.paper-actions { display: flex; align-items: center; flex: none; gap: 16px; }
+.read-link { color: var(--accent); font-size: 13px; text-decoration: none; }
+.read-link:hover { text-decoration: underline; }
 li span { flex: none; color: var(--muted); font-size: 12px; }
 .empty { color: var(--muted); font-size: 14px; }
 dialog { width: min(900px, calc(100% - 32px)); max-height: calc(100% - 32px); padding: 0; border: 1px solid var(--line); background: #fff; color: var(--ink); }
@@ -65,6 +68,18 @@ dialog::backdrop { background: rgb(32 43 43 / 35%); }
 .dialog-actions { justify-content: flex-end; }
 #dialog-message { margin-right: auto; color: var(--muted); font-size: 13px; }
 
+.reader-header { position: sticky; top: 0; z-index: 1; background: #fff; }
+.reader-header .header-inner { align-items: center; justify-content: space-between; max-width: none; }
+.reader-back { color: var(--accent); font-size: 14px; text-decoration: none; }
+.reader-back:hover { text-decoration: underline; }
+.reader-tools { display: flex; align-items: center; gap: 8px; }
+.reader-tools button { min-width: 36px; width: 36px; height: 36px; padding: 0; }
+.reader-tools span { min-width: 72px; color: var(--ink); font-size: 13px; text-align: center; }
+.reader-main { max-width: none; min-height: calc(100vh - 65px); padding: 20px; background: #e6ebe9; text-align: center; }
+#reader-message { margin: 0 0 12px; color: var(--muted); font-size: 14px; }
+#reader-message:empty { display: none; }
+#pdf-page { display: block; max-width: none; margin: auto; background: #fff; box-shadow: 0 2px 12px rgb(32 43 43 / 15%); }
+
 @media (max-width: 600px) {
   .header-inner { padding: 16px 20px; }
   main { padding: 24px 20px 40px; }
@@ -75,4 +90,10 @@ dialog::backdrop { background: rgb(32 43 43 / 35%); }
   #paper-preview { width: min(48%, 180px); }
   #paper-form { padding: 16px; }
   .dialog-actions button { width: auto; }
+  .reader-header .header-inner { flex-wrap: wrap; gap: 8px; padding: 10px; }
+  .reader-tools { justify-content: center; width: 100%; }
+  .reader-tools { gap: 4px; }
+  .reader-tools button { min-height: 36px; }
+  .reader-tools span { min-width: 54px; }
+  .reader-main { padding: 12px; overflow-x: auto; }
 }

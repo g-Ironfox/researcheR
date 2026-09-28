@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>阅读论文 - 论文库</title>
+  <link rel="stylesheet" href="/static/styles.css?v=6">
+  <script type="module" src="/static/reader.js?v=2"></script>
+</head>
+<body>
+  <header class="reader-header">
+    <div class="header-inner">
+      <a class="reader-back" href="/">返回论文库</a>
+      <div class="reader-tools" aria-label="PDF 阅读工具">
+        <button id="previous-page" type="button" title="上一页" aria-label="上一页" disabled>‹</button>
+        <span id="page-count" aria-live="polite">- / -</span>
+        <button id="next-page" type="button" title="下一页" aria-label="下一页" disabled>›</button>
+        <button id="zoom-out" type="button" title="缩小" aria-label="缩小" disabled>−</button>
+        <span id="zoom-level">100%</span>
+        <button id="zoom-in" type="button" title="放大" aria-label="放大" disabled>+</button>
+      </div>
+    </div>
+  </header>
+  <main class="reader-main">
+    <p id="reader-message" role="status">正在加载 PDF...</p>
+    <canvas id="pdf-page" aria-label="PDF 页面"></canvas>
+  </main>
+</body>
+</html>
