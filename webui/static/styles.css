@@ -21,7 +21,7 @@ h2 { margin: 0 0 10px; font-size: 15px; font-weight: 700; }
 #file-input { position: absolute; width: 1px; height: 1px; opacity: 0; }
 .file-picker { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex: 1; min-width: 0; min-height: 48px; padding: 7px 12px; background: #fff; border: 1px solid var(--line); border-radius: 0; cursor: pointer; }
 .file-picker:hover, #file-input:focus-visible + .file-picker { border-color: var(--accent); }
-#file-input:focus-visible + .file-picker, button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+#file-input:focus-visible + .file-picker, button:focus-visible, .paper-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .file-copy { display: grid; gap: 3px; min-width: 0; }
 .file-copy strong { overflow: hidden; font-size: 14px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .file-copy small { color: var(--muted); font-size: 12px; }
@@ -44,10 +44,26 @@ button:disabled { opacity: .6; cursor: wait; }
 ul { margin: 0; padding: 0; list-style: none; }
 li { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 44px; padding: 8px; border-bottom: 1px solid var(--line); }
 li:not(.empty):hover { background: #edf3f1; }
-a { color: var(--ink); font-size: 14px; overflow-wrap: anywhere; text-decoration: none; }
-a:hover { color: var(--accent); text-decoration: underline; }
+.paper-button { min-width: 0; padding: 0; border: 0; background: transparent; color: var(--ink); font-size: 14px; font-weight: 400; overflow-wrap: anywhere; text-align: left; }
+.paper-button:hover { background: transparent; color: var(--accent); text-decoration: underline; }
 li span { flex: none; color: var(--muted); font-size: 12px; }
 .empty { color: var(--muted); font-size: 14px; }
+dialog { width: min(900px, calc(100% - 32px)); max-height: calc(100% - 32px); padding: 0; border: 1px solid var(--line); background: #fff; color: var(--ink); }
+dialog::backdrop { background: rgb(32 43 43 / 35%); }
+#paper-form { padding: 22px; }
+.dialog-heading, .dialog-actions { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.dialog-heading { border-bottom: 1px solid var(--line); }
+.dialog-heading h2 { margin: 0 0 14px; }
+.close-button { width: 32px; min-width: 32px; height: 32px; padding: 0; border: 0; background: transparent; color: var(--muted); font-size: 24px; font-weight: 400; }
+.close-button:hover { background: transparent; color: var(--ink); }
+.paper-editor { display: grid; grid-template-columns: minmax(180px, 35%) minmax(0, 1fr); gap: 22px; padding: 22px 0; }
+#paper-preview { width: 100%; aspect-ratio: 0.707; object-fit: contain; align-self: start; border: 1px solid var(--line); background: #f7f9f8; }
+.paper-fields { display: grid; gap: 14px; }
+.paper-fields label { display: grid; gap: 6px; color: var(--muted); font-size: 13px; }
+.paper-fields input, .paper-fields textarea { width: 100%; padding: 9px 10px; border: 1px solid var(--line); border-radius: 0; color: var(--ink); font: inherit; font-size: 14px; resize: vertical; }
+.paper-fields input:focus, .paper-fields textarea:focus { border-color: var(--accent); outline: 2px solid rgb(23 109 98 / 15%); }
+.dialog-actions { justify-content: flex-end; }
+#dialog-message { margin-right: auto; color: var(--muted); font-size: 13px; }
 
 @media (max-width: 600px) {
   .header-inner { padding: 16px 20px; }
@@ -55,4 +71,8 @@ li span { flex: none; color: var(--muted); font-size: 12px; }
   .upload-panel { grid-template-columns: 1fr; gap: 8px; }
   button { width: 100%; min-height: 42px; }
   .library-section { margin-top: 36px; }
+  .paper-editor { grid-template-columns: 1fr; gap: 16px; }
+  #paper-preview { width: min(48%, 180px); }
+  #paper-form { padding: 16px; }
+  .dialog-actions button { width: auto; }
 }

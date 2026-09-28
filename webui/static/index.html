@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>论文库</title>
-  <link rel="stylesheet" href="/static/styles.css?v=4">
-  <script src="/static/app.js?v=4" defer></script>
+  <link rel="stylesheet" href="/static/styles.css?v=5">
+  <script src="/static/app.js?v=6" defer></script>
 </head>
 <body>
   <header>
@@ -39,5 +39,26 @@
       <ul id="paper-list" aria-label="论文列表"></ul>
     </section>
   </main>
+  <dialog id="paper-dialog" aria-labelledby="paper-dialog-title">
+    <form id="paper-form">
+      <div class="dialog-heading">
+        <h2 id="paper-dialog-title">编辑论文</h2>
+        <button type="button" class="close-button" id="close-dialog" aria-label="关闭">×</button>
+      </div>
+      <div class="paper-editor">
+        <img id="paper-preview" alt="PDF 第一页预览">
+        <div class="paper-fields">
+          <label>标题<input id="paper-title" name="title" required></label>
+          <label>发表会议/期刊<input id="paper-venue" name="venue"></label>
+          <label>Abstract<textarea id="paper-abstract" name="abstract" rows="7"></textarea></label>
+          <label>Reference<textarea id="paper-reference" name="reference" rows="7"></textarea></label>
+        </div>
+      </div>
+      <div class="dialog-actions">
+        <span id="dialog-message" role="status"></span>
+        <button type="submit" id="save-paper">保存</button>
+      </div>
+    </form>
+  </dialog>
 </body>
 </html>

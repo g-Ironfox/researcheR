@@ -5,6 +5,15 @@ const paperCount = document.querySelector("#paper-count");
 const paperList = document.querySelector("#paper-list");
 const pendingList = document.querySelector("#pending-list");
 const fileName = document.querySelector(".file-copy strong");
+const paperDialog = document.querySelector("#paper-dialog");
+const paperForm = document.querySelector("#paper-form");
+const paperTitle = document.querySelector("#paper-title");
+const paperVenue = document.querySelector("#paper-venue");
+const paperAbstract = document.querySelector("#paper-abstract");
+const paperReference = document.querySelector("#paper-reference");
+const paperPreview = document.querySelector("#paper-preview");
+const dialogMessage = document.querySelector("#dialog-message");
+let selectedFilename = "";
 
 function renderPapers(papers) {
   paperCount.textContent = papers.length;
@@ -20,14 +29,37 @@ function renderPapers(papers) {
 
   papers.forEach((paper) => {
     const item = document.createElement("li");
-    const link = document.createElement("a");
-    link.href = `/papers/${encodeURIComponent(paper.filename)}`;
-    link.textContent = paper.name;
+    const openButton = document.createElement("button");
+    openButton.type = "button";
+    openButton.className = "paper-button";
+    openButton.textContent = paper.name;
+    openButton.addEventListener("click", () => openPaper(paper.filename));
     const size = document.createElement("span");
     size.textContent = `${paper.size_kb} KB`;
-    item.append(link, size);
+    item.append(openButton, size);
     paperList.append(item);
   });
+}
+
+async function openPaper(filename) {
+  selectedFilename = filename;
+  paperForm.reset();
+  dialogMessage.textContent = "正在加载...";
+  paperPreview.src = `/api/papers/${encodeURIComponent(filename)}/preview`;
+  paperDialog.showModal();
+  try {
+    const response = await fetch(`/api/papers/${encodeURIComponent(filename)}`);
+    if (!response.ok) throw new Error("无法加载论文信息");
+    const metadata = await response.json();
+    if (selectedFilename !== filename || !paperDialog.open) return;
+    paperTitle.value = metadata.title;
+    paperVenue.value = metadata.venue;
+    paperAbstract.value = metadata.abstract;
+    paperReference.value = metadata.reference;
+    dialogMessage.textContent = "";
+  } catch (error) {
+    dialogMessage.textContent = error.message;
+  }
 }
 
 async function loadPapers() {
@@ -79,6 +111,34 @@ form.addEventListener("submit", async (event) => {
     message.textContent = error.message;
   } finally {
     button.disabled = false;
+  }
+});
+
+document.querySelector("#close-dialog").addEventListener("click", () => paperDialog.close());
+
+paperForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const saveButton = document.querySelector("#save-paper");
+  saveButton.disabled = true;
+  dialogMessage.textContent = "正在保存...";
+  try {
+    const response = await fetch(`/api/papers/${encodeURIComponent(selectedFilename)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: paperTitle.value,
+        venue: paperVenue.value,
+        abstract: paperAbstract.value,
+        reference: paperReference.value,
+      }),
+    });
+    if (!response.ok) throw new Error("保存失败");
+    dialogMessage.textContent = "已保存";
+    await loadPapers();
+  } catch (error) {
+    dialogMessage.textContent = error.message;
+  } finally {
+    saveButton.disabled = false;
   }
 });
 
