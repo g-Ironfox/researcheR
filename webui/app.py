@@ -39,18 +39,16 @@ async def read_paper(filename: str) -> FileResponse:
 @app.get("/api/papers")
 async def list_papers() -> list[dict[str, str | int]]:
     papers = sorted(UPLOAD_DIR.glob("*.pdf"), key=lambda path: path.stat().st_mtime, reverse=True)
-    return [
-        {
-            "name": read_paper_name(paper),
+    result = []
+    for paper in papers:
+        metadata = read_paper_metadata(paper)
+        result.append({
+            "name": metadata["title"],
+            "venue": metadata["venue"],
             "filename": paper.name,
             "size_kb": round(paper.stat().st_size / 1024),
-        }
-        for paper in papers
-    ]
-
-
-def read_paper_name(paper: Path) -> str:
-    return read_paper_metadata(paper)["title"]
+        })
+    return result
 
 
 def read_paper_metadata(paper: Path) -> dict[str, str]:

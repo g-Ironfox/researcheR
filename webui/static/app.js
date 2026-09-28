@@ -34,6 +34,15 @@ function renderPapers(papers) {
     openButton.className = "paper-button";
     openButton.textContent = paper.name;
     openButton.addEventListener("click", () => openPaper(paper.filename));
+    const details = document.createElement("div");
+    details.className = "paper-details";
+    details.append(openButton);
+    if (paper.venue?.trim()) {
+      const venue = document.createElement("span");
+      venue.className = "paper-venue";
+      venue.textContent = paper.venue;
+      details.append(venue);
+    }
     const readLink = document.createElement("a");
     readLink.className = "read-link";
     readLink.href = `/read/${encodeURIComponent(paper.filename)}`;
@@ -45,7 +54,7 @@ function renderPapers(papers) {
     const actions = document.createElement("div");
     actions.className = "paper-actions";
     actions.append(readLink, size);
-    item.append(openButton, actions);
+    item.append(details, actions);
     paperList.append(item);
   });
 }
