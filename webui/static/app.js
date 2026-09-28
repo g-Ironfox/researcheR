@@ -37,6 +37,8 @@ function renderPapers(papers) {
     const readLink = document.createElement("a");
     readLink.className = "read-link";
     readLink.href = `/read/${encodeURIComponent(paper.filename)}`;
+    readLink.target = "_blank";
+    readLink.rel = "noopener";
     readLink.textContent = "阅读";
     const size = document.createElement("span");
     size.textContent = `${paper.size_kb} KB`;
