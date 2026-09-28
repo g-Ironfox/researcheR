@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>论文库</title>
+  <link rel="stylesheet" href="/static/styles.css?v=4">
+  <script src="/static/app.js?v=4" defer></script>
+</head>
+<body>
+  <header>
+    <div class="header-inner">
+      <h1>论文库</h1>
+      <span class="header-note">个人文献管理</span>
+    </div>
+  </header>
+  <main>
+    <section aria-labelledby="upload-heading">
+      <h2 id="upload-heading">添加论文</h2>
+      <form id="upload-form" class="upload-panel">
+        <input id="file-input" type="file" name="files" accept="application/pdf,.pdf" multiple required>
+        <label class="file-picker" for="file-input">
+          <span class="file-copy">
+            <strong>选择 PDF 文件</strong>
+            <small>可多选，支持 .pdf 文件</small>
+          </span>
+          <span class="choose-label">浏览文件</span>
+        </label>
+        <button type="submit">上传</button>
+        <ul id="pending-list" aria-label="待上传文件"></ul>
+        <p id="message" role="status"></p>
+      </form>
+    </section>
+    <section class="library-section" aria-labelledby="library-heading">
+      <div class="section-heading">
+        <h2 id="library-heading">我的论文</h2>
+        <span class="paper-total">共 <span id="paper-count">0</span> 篇</span>
+      </div>
+      <ul id="paper-list" aria-label="论文列表"></ul>
+    </section>
+  </main>
+</body>
+</html>

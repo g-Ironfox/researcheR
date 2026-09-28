@@ -1,0 +1,50 @@
+services:
+  webui:
+    build: ./webui
+    container_name: webui_researcheR
+    ports:
+      - "8667:8000"
+    depends_on:
+      - redis
+      - mongodb
+    environment:
+      - MONGO_HOST=${MONGO_HOST}
+      - MONGO_PORT=${MONGO_PORT}
+      - MONGO_USER=${MONGO_USER}
+      - MONGO_PASS=${MONGO_PASS}
+      - MONGO_DB=${MONGO_DB}
+      - REDIS_HOST=${REDIS_HOST}
+      - REDIS_PORT=${REDIS_PORT}
+      - TZ=${TZ}
+    volumes:
+      - ./data/uploads:/app/uploads
+    networks:
+      - researcheR_net
+    
+  redis:
+    image: redis:7-alpine
+    container_name: redis_researcheR
+    ports:
+      - "6385:6379"               # 可选，暴露给宿主机
+    volumes:
+      - ./data/redis:/data        # Redis 持久化
+    command: redis-server --appendonly yes
+    networks:
+      - researcheR_net
+
+  mongodb:
+    image: mongo:8
+    container_name: mongodb_researcheR
+    ports:
+      - "27039:27017"
+    volumes:
+      - ./data/mongo:/data/db     # MongoDB 数据持久化
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=${MONGO_USER}
+      - MONGO_INITDB_ROOT_PASSWORD=${MONGO_PASS}
+    networks:
+      - researcheR_net
+
+networks:
+  researcheR_net:
+    driver: bridge
