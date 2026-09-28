@@ -52,6 +52,9 @@ async function openPaper(filename) {
   selectedFilename = filename;
   paperForm.reset();
   dialogMessage.textContent = "正在加载...";
+  paperPreview.hidden = true;
+  paperPreview.removeAttribute("src");
+  paperPreview.onload = () => { paperPreview.hidden = false; };
   paperPreview.src = `/api/papers/${encodeURIComponent(filename)}/preview`;
   paperDialog.showModal();
   try {
@@ -65,7 +68,7 @@ async function openPaper(filename) {
     paperReference.value = metadata.reference;
     dialogMessage.textContent = "";
   } catch (error) {
-    dialogMessage.textContent = error.message;
+    if (selectedFilename === filename && paperDialog.open) dialogMessage.textContent = error.message;
   }
 }
 

@@ -4,7 +4,7 @@ from uuid import uuid4
 import json
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import fitz
@@ -129,18 +129,25 @@ async def update_paper_metadata(filename: str, metadata: PaperMetadata) -> dict[
 
 
 @app.get("/api/papers/{filename}/preview")
-async def preview_paper(filename: str) -> Response:
+def preview_paper(filename: str) -> FileResponse:
     path = get_paper_path(filename)
-    try:
-        with fitz.open(path) as document:
-            if not document.page_count:
-                raise HTTPException(status_code=404, detail="PDF 没有页面")
-            image = document[0].get_pixmap(matrix=fitz.Matrix(1.5, 1.5), alpha=False).tobytes("png")
-    except HTTPException:
-        raise
-    except Exception as error:
-        raise HTTPException(status_code=422, detail="无法生成 PDF 预览") from error
-    return Response(content=image, media_type="image/png")
+    thumbnail = path.with_suffix(".thumb.png")
+    if not thumbnail.is_file():
+        try:
+            with fitz.open(path) as document:
+                if not document.page_count:
+                    raise HTTPException(status_code=404, detail="PDF 没有页面")
+                page = document[0]
+                scale = 280 / page.rect.width
+                image = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False).tobytes("png")
+            temporary = path.with_name(f"{path.stem}.{uuid4().hex}.tmp")
+            temporary.write_bytes(image)
+            temporary.replace(thumbnail)
+        except HTTPException:
+            raise
+        except Exception as error:
+            raise HTTPException(status_code=422, detail="无法生成 PDF 预览") from error
+    return FileResponse(thumbnail, media_type="image/png")
 
 
 @app.get("/papers/{filename}")
