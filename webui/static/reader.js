@@ -216,11 +216,48 @@ async function setupPages() {
 }
 
 async function loadDocument() {
+  const filename = decodeURIComponent(location.pathname.split("/").pop());
+  const starButton = document.querySelector("#reader-star");
+  const paperUrl = `/api/papers/${encodeURIComponent(filename)}`;
+  const updateStarButton = (starred) => {
+    starButton.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.7 5.5 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1-4.4-4.3 6.1-.9L12 3Z"/></svg>';
+    starButton.classList.toggle("is-starred", starred);
+    starButton.title = starred ? "取消星标" : "添加星标";
+    starButton.setAttribute("aria-label", starButton.title);
+    starButton.setAttribute("aria-pressed", String(starred));
+  };
+  starButton.disabled = true;
   try {
-    const filename = decodeURIComponent(location.pathname.split("/").pop());
+    const metadataResponse = await fetch(paperUrl);
+    if (!metadataResponse.ok) throw new Error("无法加载论文信息");
+    const metadata = await metadataResponse.json();
+    updateStarButton(metadata.starred);
+    starButton.disabled = false;
+    let starBusy = false;
+    starButton.addEventListener("click", async () => {
+      if (starBusy) return;
+      starBusy = true;
+      try {
+        const response = await fetch(`${paperUrl}/star`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ starred: starButton.getAttribute("aria-pressed") !== "true" }),
+        });
+        if (!response.ok) throw new Error("更新星标失败");
+        updateStarButton((await response.json()).starred);
+      } catch (error) {
+        message.textContent = error.message;
+      } finally {
+        starBusy = false;
+      }
+    });
+  } catch (error) {
+    message.textContent = "无法加载星标状态";
+  }
+  try {
     documentPdf = await pdfjsLib.getDocument(`/papers/${encodeURIComponent(filename)}`).promise;
     await setupPages();
-    message.textContent = "";
+    if (!starButton.disabled) message.textContent = "";
     updateZoomButtons();
   } catch (error) {
     message.textContent = "无法加载 PDF，请检查网络连接后重试";

@@ -3,6 +3,7 @@ const fileInput = document.querySelector("#file-input");
 const message = document.querySelector("#message");
 const paperCount = document.querySelector("#paper-count");
 const paperList = document.querySelector("#paper-list");
+const starFilter = document.querySelector("#star-filter");
 const pendingList = document.querySelector("#pending-list");
 const fileName = document.querySelector(".file-copy strong");
 const paperDialog = document.querySelector("#paper-dialog");
@@ -16,15 +17,17 @@ const dialogMessage = document.querySelector("#dialog-message");
 const deleteButton = document.querySelector("#delete-paper");
 const saveButton = document.querySelector("#save-paper");
 let selectedFilename = "";
+let allPapers = [];
 
-function renderPapers(papers) {
-  paperCount.textContent = papers.length;
+function renderPapers() {
+  const papers = starFilter.getAttribute("aria-pressed") === "true" ? allPapers.filter((paper) => paper.starred) : allPapers;
+  paperCount.textContent = allPapers.length;
   paperList.replaceChildren();
 
   if (papers.length === 0) {
     const empty = document.createElement("li");
     empty.className = "empty";
-    empty.textContent = "还没有论文，上传一篇 PDF 开始吧。";
+    empty.textContent = allPapers.length ? "还没有星标论文。" : "还没有论文，上传一篇 PDF 开始吧。";
     paperList.append(empty);
     return;
   }
@@ -55,7 +58,37 @@ function renderPapers(papers) {
     size.textContent = `${paper.size_kb} KB`;
     const actions = document.createElement("div");
     actions.className = "paper-actions";
-    actions.append(readLink, size);
+    const starButton = document.createElement("button");
+    starButton.type = "button";
+    starButton.className = "star-button";
+    starButton.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.7 5.5 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1-4.4-4.3 6.1-.9L12 3Z"/></svg>';
+    starButton.classList.toggle("is-starred", paper.starred);
+    starButton.title = paper.starred ? "取消星标" : "添加星标";
+    starButton.setAttribute("aria-label", starButton.title);
+    starButton.setAttribute("aria-pressed", String(paper.starred));
+    starButton.addEventListener("click", async () => {
+      if (starButton.dataset.busy === "true") return;
+      starButton.dataset.busy = "true";
+      try {
+        const response = await fetch(`/api/papers/${encodeURIComponent(paper.filename)}/star`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ starred: !paper.starred }),
+        });
+        if (!response.ok) throw new Error("更新星标失败");
+        paper.starred = (await response.json()).starred;
+        starButton.classList.toggle("is-starred", paper.starred);
+        starButton.title = paper.starred ? "取消星标" : "添加星标";
+        starButton.setAttribute("aria-label", starButton.title);
+        starButton.setAttribute("aria-pressed", String(paper.starred));
+        if (starFilter.getAttribute("aria-pressed") === "true" && !paper.starred) item.remove();
+      } catch (error) {
+        message.textContent = error.message;
+      } finally {
+        starButton.dataset.busy = "false";
+      }
+    });
+    actions.append(starButton, readLink, size);
     item.append(details, actions);
     paperList.append(item);
   });
@@ -88,8 +121,14 @@ async function openPaper(filename) {
 async function loadPapers() {
   const response = await fetch("/api/papers");
   if (!response.ok) throw new Error("无法加载论文列表");
-  renderPapers(await response.json());
+  allPapers = await response.json();
+  renderPapers();
 }
+
+starFilter.addEventListener("click", () => {
+  starFilter.setAttribute("aria-pressed", String(starFilter.getAttribute("aria-pressed") !== "true"));
+  renderPapers();
+});
 
 function renderPendingFiles(files) {
   pendingList.replaceChildren();

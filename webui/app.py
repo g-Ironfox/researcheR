@@ -25,6 +25,10 @@ class PaperMetadata(BaseModel):
     reference: str = ""
 
 
+class PaperStar(BaseModel):
+    starred: bool
+
+
 @app.get("/")
 async def index() -> FileResponse:
     return FileResponse(Path(__file__).parent / "static" / "index.html")
@@ -37,7 +41,7 @@ async def read_paper(filename: str) -> FileResponse:
 
 
 @app.get("/api/papers")
-async def list_papers() -> list[dict[str, str | int]]:
+async def list_papers() -> list[dict[str, str | int | bool]]:
     papers = sorted(UPLOAD_DIR.glob("*.pdf"), key=lambda path: path.stat().st_mtime, reverse=True)
     result = []
     for paper in papers:
@@ -45,25 +49,27 @@ async def list_papers() -> list[dict[str, str | int]]:
         result.append({
             "name": metadata["title"],
             "venue": metadata["venue"],
+            "starred": metadata["starred"],
             "filename": paper.name,
             "size_kb": round(paper.stat().st_size / 1024),
         })
     return result
 
 
-def read_paper_metadata(paper: Path) -> dict[str, str]:
+def read_paper_metadata(paper: Path) -> dict[str, str | bool]:
     metadata_path = paper.with_suffix(".json")
     if not metadata_path.is_file():
-        return {"title": paper.stem, "venue": "", "abstract": "", "reference": ""}
+        return {"title": paper.stem, "venue": "", "abstract": "", "reference": "", "starred": False}
     try:
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return {"title": paper.stem, "venue": "", "abstract": "", "reference": ""}
+        return {"title": paper.stem, "venue": "", "abstract": "", "reference": "", "starred": False}
     return {
         "title": metadata.get("title") or metadata.get("name") or paper.stem,
         "venue": metadata.get("venue", ""),
         "abstract": metadata.get("abstract", ""),
         "reference": metadata.get("reference", ""),
+        "starred": metadata.get("starred", False),
     }
 
 
@@ -114,16 +120,26 @@ async def upload(files: Annotated[list[UploadFile], File()]) -> dict[str, list[s
 
 
 @app.get("/api/papers/{filename}")
-async def get_paper_metadata(filename: str) -> dict[str, str]:
+async def get_paper_metadata(filename: str) -> dict[str, str | bool]:
     return read_paper_metadata(get_paper_path(filename))
 
 
 @app.put("/api/papers/{filename}")
-async def update_paper_metadata(filename: str, metadata: PaperMetadata) -> dict[str, str]:
+async def update_paper_metadata(filename: str, metadata: PaperMetadata) -> dict[str, str | bool]:
     path = get_paper_path(filename)
     data = metadata.model_dump()
+    data["starred"] = read_paper_metadata(path)["starred"]
     path.with_suffix(".json").write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     return data
+
+
+@app.put("/api/papers/{filename}/star")
+async def update_paper_star(filename: str, star: PaperStar) -> dict[str, bool]:
+    path = get_paper_path(filename)
+    data = read_paper_metadata(path)
+    data["starred"] = star.starred
+    path.with_suffix(".json").write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    return {"starred": star.starred}
 
 
 @app.delete("/api/papers/{filename}", status_code=204)
