@@ -4,6 +4,7 @@ const message = document.querySelector("#message");
 const paperCount = document.querySelector("#paper-count");
 const paperList = document.querySelector("#paper-list");
 const starFilter = document.querySelector("#star-filter");
+const titleSearch = document.querySelector("#title-search");
 const pendingList = document.querySelector("#pending-list");
 const fileName = document.querySelector(".file-copy strong");
 const paperDialog = document.querySelector("#paper-dialog");
@@ -20,14 +21,21 @@ let selectedFilename = "";
 let allPapers = [];
 
 function renderPapers() {
-  const papers = starFilter.getAttribute("aria-pressed") === "true" ? allPapers.filter((paper) => paper.starred) : allPapers;
+  const query = titleSearch.value.trim().toLocaleLowerCase();
+  const papers = allPapers.filter((paper) => {
+    const matchesTitle = !query || paper.name.toLocaleLowerCase().includes(query);
+    const matchesStar = starFilter.getAttribute("aria-pressed") !== "true" || paper.starred;
+    return matchesTitle && matchesStar;
+  });
   paperCount.textContent = allPapers.length;
   paperList.replaceChildren();
 
   if (papers.length === 0) {
     const empty = document.createElement("li");
     empty.className = "empty";
-    empty.textContent = allPapers.length ? "还没有星标论文。" : "还没有论文，上传一篇 PDF 开始吧。";
+    empty.textContent = query
+      ? "没有找到匹配标题的论文。"
+      : allPapers.length ? "还没有星标论文。" : "还没有论文，上传一篇 PDF 开始吧。";
     paperList.append(empty);
     return;
   }
@@ -129,6 +137,8 @@ starFilter.addEventListener("click", () => {
   starFilter.setAttribute("aria-pressed", String(starFilter.getAttribute("aria-pressed") !== "true"));
   renderPapers();
 });
+
+titleSearch.addEventListener("input", renderPapers);
 
 function renderPendingFiles(files) {
   pendingList.replaceChildren();

@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>researcheR</title>
-  <link rel="stylesheet" href="/static/styles.css?v=21">
-  <script src="/static/app.js?v=15" defer></script>
+  <link rel="stylesheet" href="/static/styles.css?v=22">
+  <script src="/static/app.js?v=16" defer></script>
 </head>
 <body>
   <header>
@@ -35,6 +35,10 @@
       <div class="section-heading">
         <h2 id="library-heading">我的论文</h2>
         <div class="library-controls">
+          <label class="search-control" for="title-search">
+            <span>搜索标题</span>
+            <input id="title-search" type="search" placeholder="输入标题" autocomplete="off">
+          </label>
           <button type="button" id="star-filter" aria-pressed="false">仅看星标</button>
           <span class="paper-total">共 <span id="paper-count">0</span> 篇</span>
         </div>
