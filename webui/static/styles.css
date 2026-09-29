@@ -69,6 +69,8 @@ dialog::backdrop { background: rgb(32 43 43 / 35%); }
 .paper-fields input:focus, .paper-fields textarea:focus { border-color: var(--accent); outline: 2px solid rgb(23 109 98 / 15%); }
 .dialog-actions { justify-content: flex-end; }
 #dialog-message { margin-right: auto; color: var(--muted); font-size: 13px; }
+#delete-paper { border-color: #b34138; background: #b34138; }
+#delete-paper:hover:not(:disabled) { background: #923028; }
 
 .reader-header { position: sticky; top: 0; z-index: 1; background: #fff; }
 .reader-header .header-inner { align-items: center; justify-content: center; max-width: none; padding: 8px 16px; }

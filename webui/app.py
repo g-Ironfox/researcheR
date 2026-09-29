@@ -126,6 +126,14 @@ async def update_paper_metadata(filename: str, metadata: PaperMetadata) -> dict[
     return data
 
 
+@app.delete("/api/papers/{filename}", status_code=204)
+async def delete_paper(filename: str) -> None:
+    path = get_paper_path(filename)
+    path.unlink()
+    path.with_suffix(".json").unlink(missing_ok=True)
+    path.with_suffix(".thumb.png").unlink(missing_ok=True)
+
+
 @app.get("/api/papers/{filename}/preview")
 def preview_paper(filename: str) -> FileResponse:
     path = get_paper_path(filename)

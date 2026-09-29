@@ -13,6 +13,8 @@ const paperAbstract = document.querySelector("#paper-abstract");
 const paperReference = document.querySelector("#paper-reference");
 const paperPreview = document.querySelector("#paper-preview");
 const dialogMessage = document.querySelector("#dialog-message");
+const deleteButton = document.querySelector("#delete-paper");
+const saveButton = document.querySelector("#save-paper");
 let selectedFilename = "";
 
 function renderPapers(papers) {
@@ -137,10 +139,28 @@ form.addEventListener("submit", async (event) => {
 
 document.querySelector("#close-dialog").addEventListener("click", () => paperDialog.close());
 
+deleteButton.addEventListener("click", async () => {
+  if (!window.confirm(`确定删除《${paperTitle.value}》吗？此操作无法撤销。`)) return;
+  deleteButton.disabled = true;
+  saveButton.disabled = true;
+  dialogMessage.textContent = "正在删除...";
+  try {
+    const response = await fetch(`/api/papers/${encodeURIComponent(selectedFilename)}`, { method: "DELETE" });
+    if (!response.ok) throw new Error("删除失败");
+    paperDialog.close();
+    await loadPapers();
+  } catch (error) {
+    dialogMessage.textContent = error.message;
+  } finally {
+    deleteButton.disabled = false;
+    saveButton.disabled = false;
+  }
+});
+
 paperForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  const saveButton = document.querySelector("#save-paper");
   saveButton.disabled = true;
+  deleteButton.disabled = true;
   dialogMessage.textContent = "正在保存...";
   try {
     const response = await fetch(`/api/papers/${encodeURIComponent(selectedFilename)}`, {
@@ -160,6 +180,7 @@ paperForm.addEventListener("submit", async (event) => {
     dialogMessage.textContent = error.message;
   } finally {
     saveButton.disabled = false;
+    deleteButton.disabled = false;
   }
 });
 
