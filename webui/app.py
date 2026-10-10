@@ -1,9 +1,10 @@
 from pathlib import Path
 from typing import Annotated
 from uuid import uuid4
+from hashlib import sha256
 import json
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -41,19 +42,38 @@ async def read_paper(filename: str) -> FileResponse:
 
 
 @app.get("/api/papers")
-async def list_papers() -> list[dict[str, str | int | bool]]:
+async def list_papers(
+    page: int = Query(1, ge=1),
+    query: str = Query("", alias="q"),
+    starred: bool = False,
+) -> dict[str, int | list[dict[str, str | int | bool]]]:
     papers = sorted(UPLOAD_DIR.glob("*.pdf"), key=lambda path: path.stat().st_mtime, reverse=True)
-    result = []
+    matches = []
+    normalized_query = query.strip().casefold()
     for paper in papers:
         metadata = read_paper_metadata(paper)
-        result.append({
+        if normalized_query and normalized_query not in str(metadata["title"]).casefold():
+            continue
+        if starred and not metadata["starred"]:
+            continue
+        matches.append({
             "name": metadata["title"],
             "venue": metadata["venue"],
             "starred": metadata["starred"],
             "filename": paper.name,
             "size_kb": round(paper.stat().st_size / 1024),
         })
-    return result
+    papers_per_page = 20
+    total = len(matches)
+    page_count = max(1, (total + papers_per_page - 1) // papers_per_page)
+    page = min(page, page_count)
+    page_start = (page - 1) * papers_per_page
+    return {
+        "papers": matches[page_start:page_start + papers_per_page],
+        "total": total,
+        "page": page,
+        "page_count": page_count,
+    }
 
 
 def read_paper_metadata(paper: Path) -> dict[str, str | bool]:
@@ -96,13 +116,30 @@ async def upload(files: Annotated[list[UploadFile], File()]) -> dict[str, list[s
             raise HTTPException(status_code=400, detail="文件内容不是有效的 PDF")
         headers.append(header)
 
+    hashes: set[bytes] = set()
+    for paper in UPLOAD_DIR.glob("*.pdf"):
+        digest = sha256()
+        with paper.open("rb") as existing:
+            while chunk := existing.read(1024 * 1024):
+                digest.update(chunk)
+        hashes.add(digest.digest())
+
     filenames: list[str] = []
+    duplicates: list[str] = []
     for file, header in zip(files, headers):
         destination = UPLOAD_DIR / f"{uuid4().hex}.pdf"
+        digest = sha256()
+        digest.update(header)
         with destination.open("wb") as output:
             output.write(header)
             while chunk := await file.read(1024 * 1024):
                 output.write(chunk)
+                digest.update(chunk)
+        if digest.digest() in hashes:
+            destination.unlink()
+            duplicates.append(file.filename)
+            continue
+        hashes.add(digest.digest())
         try:
             title = (PdfReader(destination).metadata.title or "").strip()
         except Exception:
@@ -116,7 +153,7 @@ async def upload(files: Annotated[list[UploadFile], File()]) -> dict[str, list[s
             encoding="utf-8",
         )
         filenames.append(destination.name)
-    return {"filenames": filenames}
+    return {"filenames": filenames, "duplicates": duplicates}
 
 
 @app.get("/api/papers/{filename}")

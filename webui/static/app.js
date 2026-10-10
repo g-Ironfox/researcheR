@@ -17,30 +17,41 @@ const paperPreview = document.querySelector("#paper-preview");
 const dialogMessage = document.querySelector("#dialog-message");
 const deleteButton = document.querySelector("#delete-paper");
 const saveButton = document.querySelector("#save-paper");
+const paperPagination = document.querySelector("#paper-pagination");
+const previousPage = document.querySelector("#previous-page");
+const nextPage = document.querySelector("#next-page");
+const pageStatus = document.querySelector("#page-status");
 let selectedFilename = "";
-let allPapers = [];
+let papers = { items: [], total: 0, page: 1, page_count: 1 };
+let currentPage = 1;
+let pageCount = 1;
+let papersRequestId = 0;
 
 function renderPapers() {
-  const query = titleSearch.value.trim().toLocaleLowerCase();
-  const papers = allPapers.filter((paper) => {
-    const matchesTitle = !query || paper.name.toLocaleLowerCase().includes(query);
-    const matchesStar = starFilter.getAttribute("aria-pressed") !== "true" || paper.starred;
-    return matchesTitle && matchesStar;
-  });
-  paperCount.textContent = allPapers.length;
   paperList.replaceChildren();
+  paperCount.textContent = papers.total;
 
-  if (papers.length === 0) {
+  if (papers.items.length === 0) {
+    paperPagination.hidden = true;
     const empty = document.createElement("li");
     empty.className = "empty";
-    empty.textContent = query
+    empty.textContent = titleSearch.value.trim()
       ? "没有找到匹配标题的论文。"
-      : allPapers.length ? "还没有星标论文。" : "还没有论文，上传一篇 PDF 开始吧。";
+      : starFilter.getAttribute("aria-pressed") === "true"
+        ? "还没有星标论文。"
+        : "还没有论文，上传一篇 PDF 开始吧。";
     paperList.append(empty);
     return;
   }
 
-  papers.forEach((paper) => {
+  currentPage = papers.page;
+  pageCount = papers.page_count;
+  pageStatus.textContent = `${currentPage} / ${pageCount}`;
+  paperPagination.hidden = pageCount <= 1;
+  previousPage.setAttribute("aria-disabled", String(currentPage === 1));
+  nextPage.setAttribute("aria-disabled", String(currentPage === pageCount));
+
+  papers.items.forEach((paper) => {
     const item = document.createElement("li");
     const openButton = document.createElement("button");
     openButton.type = "button";
@@ -89,7 +100,7 @@ function renderPapers() {
         starButton.title = paper.starred ? "取消星标" : "添加星标";
         starButton.setAttribute("aria-label", starButton.title);
         starButton.setAttribute("aria-pressed", String(paper.starred));
-        if (starFilter.getAttribute("aria-pressed") === "true" && !paper.starred) item.remove();
+        loadPapers(currentPage).catch((error) => { message.textContent = error.message; });
       } catch (error) {
         message.textContent = error.message;
       } finally {
@@ -126,19 +137,41 @@ async function openPaper(filename) {
   }
 }
 
-async function loadPapers() {
-  const response = await fetch("/api/papers");
+async function loadPapers(page = currentPage) {
+  const requestId = ++papersRequestId;
+  const params = new URLSearchParams({
+    page: String(page),
+    q: titleSearch.value.trim(),
+    starred: String(starFilter.getAttribute("aria-pressed") === "true"),
+  });
+  const response = await fetch(`/api/papers?${params}`);
   if (!response.ok) throw new Error("无法加载论文列表");
-  allPapers = await response.json();
+  const result = await response.json();
+  if (requestId !== papersRequestId) return;
+  papers = { items: result.papers, ...result };
   renderPapers();
 }
 
 starFilter.addEventListener("click", () => {
   starFilter.setAttribute("aria-pressed", String(starFilter.getAttribute("aria-pressed") !== "true"));
-  renderPapers();
+  currentPage = 1;
+  loadPapers(1).catch((error) => { message.textContent = error.message; });
 });
 
-titleSearch.addEventListener("input", renderPapers);
+titleSearch.addEventListener("input", () => {
+  currentPage = 1;
+  loadPapers(1).catch((error) => { message.textContent = error.message; });
+});
+
+previousPage.addEventListener("click", () => {
+  if (currentPage === 1) return;
+  loadPapers(currentPage - 1).catch((error) => { message.textContent = error.message; });
+});
+
+nextPage.addEventListener("click", () => {
+  if (currentPage >= pageCount) return;
+  loadPapers(currentPage + 1).catch((error) => { message.textContent = error.message; });
+});
 
 function renderPendingFiles(files) {
   pendingList.replaceChildren();
@@ -163,11 +196,9 @@ fileInput.addEventListener("change", () => {
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
-  if (!fileInput.files.length) return;
+  if (!fileInput.files.length || form.dataset.busy) return;
 
-  const button = form.querySelector("button");
-  const fileCount = fileInput.files.length;
-  button.disabled = true;
+  form.dataset.busy = "true";
   message.textContent = "正在上传...";
   try {
     const response = await fetch("/upload", { method: "POST", body: new FormData(form) });
@@ -175,14 +206,16 @@ form.addEventListener("submit", async (event) => {
       const detail = await response.json();
       throw new Error(detail.detail || "上传失败");
     }
+    const result = await response.json();
     form.reset();
     renderPendingFiles([]);
-    message.textContent = `已上传 ${fileCount} 个文件`;
+    message.textContent = `已上传 ${result.filenames.length} 个文件` +
+      (result.duplicates.length ? `，跳过 ${result.duplicates.length} 个重复文件：${result.duplicates.join("、")}` : "");
     await loadPapers();
   } catch (error) {
     message.textContent = error.message;
   } finally {
-    button.disabled = false;
+    delete form.dataset.busy;
   }
 });
 

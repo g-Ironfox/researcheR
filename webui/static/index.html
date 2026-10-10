@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>researcheR</title>
-  <link rel="stylesheet" href="/static/styles.css?v=22">
-  <script src="/static/app.js?v=16" defer></script>
+  <link rel="stylesheet" href="/static/styles.css?v=23">
+  <script src="/static/app.js?v=18" defer></script>
 </head>
 <body>
   <header>
@@ -44,6 +44,11 @@
         </div>
       </div>
       <ul id="paper-list" aria-label="论文列表"></ul>
+      <nav id="paper-pagination" class="paper-pagination" aria-label="论文列表分页" hidden>
+        <button type="button" id="previous-page" aria-label="上一页">上一页</button>
+        <span id="page-status" aria-live="polite"></span>
+        <button type="button" id="next-page" aria-label="下一页">下一页</button>
+      </nav>
     </section>
   </main>
   <dialog id="paper-dialog" aria-labelledby="paper-dialog-title">
