@@ -99,6 +99,7 @@ dialog::backdrop { background: rgb(32 43 43 / 35%); }
 .reader-tools button { min-width: 32px; width: 32px; height: 32px; padding: 0; border-color: var(--line); background: #fff; color: var(--accent); font-size: 18px; font-weight: 400; }
 .reader-tools button:hover:not(:disabled) { border-color: var(--accent); background: #edf3f1; }
 .reader-tools button:disabled { background: #fff; color: var(--muted); }
+#copy-page svg { width: 17px; height: 17px; vertical-align: middle; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.6; }
 #reader-star { appearance: none; -webkit-tap-highlight-color: transparent; width: 28px; min-width: 28px; height: 28px; margin-left: 8px; padding: 0; border: 0; background: transparent; color: #737d79; }
 #reader-star svg { width: 17px; height: 17px; vertical-align: middle; }
 #reader-star path { fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.5; }
@@ -113,7 +114,7 @@ dialog::backdrop { background: rgb(32 43 43 / 35%); }
 #zoom-out { margin-left: 12px; }
 .reader-tools span { color: var(--muted); font-size: 13px; white-space: nowrap; }
 .reader-main { max-width: none; min-height: calc(100vh - 65px); padding: 20px; background: #e6ebe9; text-align: center; }
-#reader-message { margin: 0 0 12px; color: var(--muted); font-size: 14px; }
+#reader-message { position: fixed; left: 16px; bottom: 16px; z-index: 3; max-width: min(560px, calc(100vw - 32px)); margin: 0; padding: 9px 12px; border: 1px solid var(--line); background: #fff; box-shadow: 0 2px 8px rgb(32 43 43 / 16%); color: var(--ink); font-size: 13px; line-height: 1.45; text-align: left; pointer-events: none; }
 #reader-message:empty { display: none; }
 #pdf-pages { display: flex; flex-direction: column; gap: 20px; }
 .pdf-page { position: relative; margin: 0 auto; background: #fff; box-shadow: 0 2px 12px rgb(32 43 43 / 15%); scroll-margin-top: 76px; }
@@ -147,4 +148,5 @@ dialog::backdrop { background: rgb(32 43 43 / 35%); }
   .reader-tools input { height: 36px; }
   #zoom-out { margin-left: 6px; }
   .reader-main { padding: 12px; overflow-x: auto; }
+  #reader-message { left: 12px; bottom: calc(12px + env(safe-area-inset-bottom)); max-width: calc(100vw - 24px); }
 }

@@ -10,6 +10,7 @@ const pageInput = document.querySelector("#page-input");
 const pageTotal = document.querySelector("#page-total");
 const zoomOutButton = document.querySelector("#zoom-out");
 const zoomInButton = document.querySelector("#zoom-in");
+const copyPageButton = document.querySelector("#copy-page");
 const selectionOverlay = document.createElement("div");
 selectionOverlay.className = "selection-overlay";
 document.body.append(selectionOverlay);
@@ -83,7 +84,7 @@ async function renderEntry(entry) {
     await entry.page.render({ canvasContext: entry.canvas.getContext("2d"), viewport, transform: [pixelRatio, 0, 0, pixelRatio, 0, 0] }).promise;
     entry.renderedZoom = renderZoom;
     renderText(entry, viewport);
-    message.textContent = "";
+    if (message.textContent === "正在加载 PDF...") message.textContent = "";
   } catch (error) {
     message.textContent = "无法渲染 PDF 页面";
   } finally {
@@ -156,14 +157,91 @@ zoomInput.addEventListener("change", () => {
 
 function updateCurrentPage(force = false) {
   if (!entries.length || (!force && document.activeElement === pageInput)) return;
-  const middle = window.innerHeight / 2;
-  let current = entries[0].number;
-  for (const entry of entries) {
-    if (entry.wrapper.getBoundingClientRect().top <= middle) current = entry.number;
-  }
-  const text = String(current);
-  if (pageInput.value !== text) pageInput.value = text;
+  const current = getCurrentPageEntry();
+  if (pageInput.value !== String(current.number)) pageInput.value = String(current.number);
 }
+
+function getCurrentPageEntry() {
+  const middle = window.innerHeight / 2;
+  let current = entries[0];
+  for (const entry of entries) {
+    if (entry.wrapper.getBoundingClientRect().top <= middle) current = entry;
+  }
+  return current;
+}
+
+function canvasToPng(canvas) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) resolve(blob);
+      else reject(new Error("无法生成 PNG 图片"));
+    }, "image/png");
+  });
+}
+
+async function renderAllPagesToPng() {
+  // Keep export rendering separate from the reader's lazy rendering and zoom.
+  const targetWidth = 1440;
+  const maxSide = 16000;
+  const maxPixels = 32000000;
+  const aspectRatios = entries.map((entry) => entry.naturalHeight / entry.naturalWidth);
+  const totalRatio = aspectRatios.reduce((sum, ratio) => sum + ratio, 0);
+  const width = Math.floor(Math.min(targetWidth, maxSide / totalRatio, Math.sqrt(maxPixels / totalRatio)));
+  if (width < 320) throw new Error("文档过长，合并长图会导致文字过小，请使用较短的 PDF");
+  const heights = aspectRatios.map((ratio) => Math.max(1, Math.floor(width * ratio)));
+  const output = document.createElement("canvas");
+  const pageCanvas = document.createElement("canvas");
+  try {
+    output.width = width;
+    output.height = heights.reduce((sum, height) => sum + height, 0);
+    const context = output.getContext("2d");
+    if (!context) throw new Error("无法创建 PNG 画布，请关闭其他标签页后重试");
+    context.fillStyle = "#fff";
+    context.fillRect(0, 0, output.width, output.height);
+    let y = 0;
+    for (const [index, entry] of entries.entries()) {
+      message.textContent = `正在渲染第 ${index + 1} / ${entries.length} 页…`;
+      const viewport = entry.page.getViewport({ scale: width / entry.naturalWidth });
+      pageCanvas.width = width;
+      pageCanvas.height = Math.ceil(viewport.height);
+      await entry.page.render({ canvasContext: pageCanvas.getContext("2d"), viewport, background: "#fff" }).promise;
+      context.drawImage(pageCanvas, 0, 0, width, heights[index], 0, y, width, heights[index]);
+      y += heights[index];
+    }
+    message.textContent = "正在生成 PNG 并写入剪贴板…";
+    return await canvasToPng(output);
+  } finally {
+    pageCanvas.width = pageCanvas.height = 0;
+    output.width = output.height = 0;
+  }
+}
+
+copyPageButton.addEventListener("click", async () => {
+  if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") {
+    message.textContent = "当前浏览器无法复制图片，请通过 HTTPS 或 localhost 使用支持图片剪贴板的浏览器";
+    return;
+  }
+  if (!entries.length || copyPageButton.disabled) return;
+  copyPageButton.disabled = true;
+  let exportError;
+  try {
+    // Supply the PNG promise immediately, while the click's user activation is active.
+    const png = renderAllPagesToPng().catch((error) => {
+      exportError = error;
+      throw error;
+    });
+    const results = await Promise.allSettled([png, navigator.clipboard.write([new ClipboardItem({ "image/png": png })])]);
+    const failure = results.find((result) => result.status === "rejected");
+    if (failure) throw failure.reason;
+    message.textContent = `已将全部 ${entries.length} 页合并为一张 PNG 并复制到剪贴板`;
+  } catch (error) {
+    message.textContent = exportError?.message || (error.name === "NotAllowedError"
+      ? "无法写入剪贴板，请保持阅读页处于前台并允许剪贴板权限后重试"
+      : "复制 PNG 失败，请重试或检查浏览器的图片剪贴板支持");
+  } finally {
+    copyPageButton.disabled = false;
+  }
+});
 
 let pageUpdateScheduled = false;
 window.addEventListener("scroll", () => {
@@ -212,6 +290,7 @@ async function setupPages() {
   }
   updateSizes();
   pageTotal.textContent = `/ ${documentPdf.numPages}`;
+  copyPageButton.disabled = false;
   updateCurrentPage(true);
 }
 

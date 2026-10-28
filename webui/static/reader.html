@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>阅读论文 - 论文库</title>
-  <link rel="stylesheet" href="/static/styles.css?v=21">
-  <script type="module" src="/static/reader.js?v=13"></script>
+  <link rel="stylesheet" href="/static/styles.css?v=20261028-2">
+  <script type="module" src="/static/reader.js?v=20261028-2"></script>
 </head>
 <body>
   <header class="reader-header">
@@ -16,12 +16,15 @@
         <button id="zoom-out" type="button" title="缩小" aria-label="缩小" disabled>−</button>
         <input id="zoom-level" type="text" inputmode="numeric" value="100%" aria-label="缩放比例" title="缩放比例（50-200）">
         <button id="zoom-in" type="button" title="放大" aria-label="放大" disabled>+</button>
+        <button id="copy-page" type="button" title="复制全部页面为一张长图 PNG" aria-label="复制全部页面为一张长图 PNG" disabled>
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="1.5" fill="none"/><path d="M16 8V5.5A1.5 1.5 0 0 0 14.5 4h-9A1.5 1.5 0 0 0 4 5.5v9A1.5 1.5 0 0 0 5.5 16H8" fill="none"/></svg>
+        </button>
         <button id="reader-star" type="button" title="添加星标" aria-label="添加星标" aria-pressed="false">☆</button>
       </div>
     </div>
   </header>
   <main class="reader-main">
-    <p id="reader-message" role="status">正在加载 PDF...</p>
+    <p id="reader-message" role="status" aria-live="polite" style="position: fixed; left: 16px; bottom: 16px; z-index: 3; margin: 0; max-width: calc(100vw - 32px); pointer-events: none;">正在加载 PDF...</p>
     <div id="pdf-pages"></div>
   </main>
 </body>
