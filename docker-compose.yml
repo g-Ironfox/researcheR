@@ -16,6 +16,7 @@ services:
       - REDIS_HOST=${REDIS_HOST}
       - REDIS_PORT=${REDIS_PORT}
       - TZ=${TZ}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
     volumes:
       - ./data/uploads:/app/uploads
     networks:
@@ -25,7 +26,7 @@ services:
     image: redis:7-alpine
     container_name: redis_researcheR
     ports:
-      - "6385:6379"               # 可选，暴露给宿主机
+      - "6366:6379"               # 可选，暴露给宿主机
     volumes:
       - ./data/redis:/data        # Redis 持久化
     command: redis-server --appendonly yes

@@ -61,7 +61,10 @@ li:not(.empty):hover { background: #edf3f1; }
 .paper-button { width: auto; min-width: 0; min-height: 0; padding: 0; border: 0; background: transparent; color: var(--ink); font-size: 14px; font-weight: 400; overflow-wrap: anywhere; text-align: left; }
 .paper-button:hover { background: transparent; color: var(--accent); text-decoration: underline; }
 .paper-venue { overflow-wrap: anywhere; text-align: left; }
-.paper-actions { display: grid; grid-template-columns: 32px 32px 72px; align-items: center; flex: none; gap: 12px; }
+.paper-actions { display: flex; align-items: center; flex: none; flex-wrap: wrap; justify-content: flex-end; gap: 12px; }
+.ocr-info { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.paper-actions .ocr-button { width: auto; min-width: 0; min-height: 28px; padding: 0 8px; border-color: var(--line); background: #fff; color: var(--accent); font-size: 12px; white-space: nowrap; }
+.paper-actions .ocr-button:hover:not(:disabled) { border-color: var(--accent); background: #edf3f1; }
 .star-button { appearance: none; -webkit-tap-highlight-color: transparent; display: grid; place-items: center; width: 28px; min-width: 28px; height: 28px; min-height: 28px; padding: 0; border: 0; background: transparent; color: #737d79; }
 .star-button svg { width: 17px; height: 17px; overflow: visible; }
 .star-button path { fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.5; }
@@ -114,6 +117,26 @@ dialog::backdrop { background: rgb(32 43 43 / 35%); }
 #zoom-out { margin-left: 12px; }
 .reader-tools span { color: var(--muted); font-size: 13px; white-space: nowrap; }
 .reader-main { max-width: none; min-height: calc(100vh - 65px); padding: 20px; background: #e6ebe9; text-align: center; }
+
+.export-dialog { width: min(380px, calc(100vw - 32px)); padding: 22px; border: 1px solid var(--line); background: #fff; color: var(--ink); box-shadow: 0 16px 48px rgb(20 35 33 / 24%); }
+.export-dialog::backdrop { background: rgb(20 35 33 / 38%); }
+.export-dialog form { display: grid; gap: 22px; }
+.export-dialog-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.export-dialog-heading h2 { margin: 0; font-size: 17px; }
+.export-page-count { margin: 5px 0 0; color: var(--muted); font-size: 12px; }
+.export-dialog .export-close { display: grid; place-items: center; width: 30px; min-width: 30px; height: 30px; padding: 0; border: 0; background: transparent; color: var(--muted); font-size: 23px; font-weight: 400; line-height: 1; }
+.export-dialog .export-close:hover { background: #edf3f1; color: var(--ink); }
+.export-range-fields { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: end; gap: 12px; }
+.export-range-fields label { display: grid; gap: 7px; color: var(--muted); font-size: 12px; }
+.export-range-fields input { width: 100%; min-width: 0; height: 40px; padding: 0 10px; border: 1px solid var(--line); border-radius: 0; color: var(--ink); font: inherit; font-size: 15px; }
+.export-range-fields input:focus { border-color: var(--accent); outline: 2px solid rgb(23 109 98 / 15%); }
+.export-range-separator { padding-bottom: 11px; color: var(--muted); font-size: 13px; }
+.export-error { min-height: 0; margin: -12px 0 -10px; color: #a33129; font-size: 12px; line-height: 1.4; }
+.export-error:empty { display: none; }
+.export-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.export-dialog-actions button { width: auto; min-width: 88px; min-height: 36px; padding: 0 12px; font-size: 13px; }
+.export-dialog-actions .export-cancel { border-color: var(--line); background: #fff; color: var(--ink); }
+.export-dialog-actions .export-cancel:hover { border-color: var(--accent); background: #edf3f1; }
 #reader-message { position: fixed; left: 16px; bottom: 16px; z-index: 3; max-width: min(560px, calc(100vw - 32px)); margin: 0; padding: 9px 12px; border: 1px solid var(--line); background: #fff; box-shadow: 0 2px 8px rgb(32 43 43 / 16%); color: var(--ink); font-size: 13px; line-height: 1.45; text-align: left; pointer-events: none; }
 #reader-message:empty { display: none; }
 #pdf-pages { display: flex; flex-direction: column; gap: 20px; }
@@ -148,5 +171,6 @@ dialog::backdrop { background: rgb(32 43 43 / 35%); }
   .reader-tools input { height: 36px; }
   #zoom-out { margin-left: 6px; }
   .reader-main { padding: 12px; overflow-x: auto; }
+  .export-dialog { padding: 18px; }
   #reader-message { left: 12px; bottom: calc(12px + env(safe-area-inset-bottom)); max-width: calc(100vw - 24px); }
 }

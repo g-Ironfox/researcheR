@@ -26,6 +26,8 @@ let papers = { items: [], total: 0, page: 1, page_count: 1 };
 let currentPage = 1;
 let pageCount = 1;
 let papersRequestId = 0;
+let ocrRefreshTimer;
+const pendingOcr = new Set();
 
 function renderPapers() {
   paperList.replaceChildren();
@@ -107,10 +109,67 @@ function renderPapers() {
         starButton.dataset.busy = "false";
       }
     });
-    actions.append(starButton, readLink, size);
+    const ocrInfo = document.createElement("span");
+    ocrInfo.className = "ocr-info";
+    const ocrStatus = document.createElement("span");
+    const ocrLabels = {
+      processing: "OCR 识别中…",
+      completed: "OCR 完成",
+      partial: "OCR 不完整",
+      failed: "OCR 失败",
+      not_configured: "OCR 未配置",
+      not_started: "未 OCR",
+    };
+    const processing = pendingOcr.has(paper.filename) || paper.ocr_status === "processing";
+    ocrStatus.textContent = ocrLabels[processing ? "processing" : paper.ocr_status] || "未 OCR";
+    ocrStatus.title = processing ? ocrStatus.textContent : paper.ocr_error || ocrStatus.textContent;
+    ocrInfo.append(ocrStatus);
+    if (paper.ocr_downloadable) {
+      const ocrLink = document.createElement("a");
+      ocrLink.className = "read-link";
+      ocrLink.href = "/api/papers/" + encodeURIComponent(paper.filename) + "/ocr";
+      ocrLink.download = "";
+      ocrLink.textContent = "JSON";
+      ocrLink.title = "下载 OCR JSON";
+      ocrLink.setAttribute("aria-label", "下载《" + paper.name + "》的 OCR JSON");
+      ocrInfo.append(ocrLink);
+    }
+    if (processing || paper.ocr_status !== "completed") {
+      const ocrButton = document.createElement("button");
+      ocrButton.type = "button";
+      ocrButton.className = "ocr-button";
+      ocrButton.textContent = processing ? "识别中…" : paper.ocr_status === "not_started" ? "开始 OCR" : "重新 OCR";
+      ocrButton.disabled = processing;
+      ocrButton.setAttribute("aria-label", `${ocrButton.textContent}??${paper.name}?`);
+      ocrButton.addEventListener("click", () => retryOcr(paper));
+      ocrInfo.append(ocrButton);
+    }
+    actions.append(starButton, readLink, ocrInfo, size);
     item.append(details, actions);
     paperList.append(item);
   });
+}
+
+async function retryOcr(paper) {
+  if (pendingOcr.has(paper.filename) || paper.ocr_status === "processing") return;
+  pendingOcr.add(paper.filename);
+  renderPapers();
+  message.textContent = `正在为《${paper.name}》逐页 OCR，请等待识别完成…`;
+  try {
+    const response = await fetch(`/api/papers/${encodeURIComponent(paper.filename)}/ocr`, { method: "POST" });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.detail || "OCR 请求失败");
+    Object.assign(paper, result);
+    message.textContent = result.ocr_status === "completed"
+      ? `《${paper.name}》OCR 完成，可下载 JSON。`
+      : `《${paper.name}》OCR 未完成：${result.ocr_error || "请稍后重试"}`;
+  } catch (error) {
+    message.textContent = error.message;
+  } finally {
+    pendingOcr.delete(paper.filename);
+    renderPapers();
+    loadPapers(currentPage).catch((error) => { message.textContent = error.message; });
+  }
 }
 
 async function openPaper(filename) {
@@ -150,6 +209,12 @@ async function loadPapers(page = currentPage) {
   if (requestId !== papersRequestId) return;
   papers = { items: result.papers, ...result };
   renderPapers();
+  clearTimeout(ocrRefreshTimer);
+  if (papers.items.some((paper) => paper.ocr_status === "processing")) {
+    ocrRefreshTimer = setTimeout(() => {
+      loadPapers(currentPage).catch((error) => { message.textContent = error.message; });
+    }, 2000);
+  }
 }
 
 starFilter.addEventListener("click", () => {
@@ -199,9 +264,13 @@ form.addEventListener("submit", async (event) => {
   if (!fileInput.files.length || form.dataset.busy) return;
 
   form.dataset.busy = "true";
-  message.textContent = "正在上传...";
+  const uploadBody = new FormData(form);
+  const uploadButton = form.querySelector('button[type="submit"]');
+  uploadButton.disabled = true;
+  fileInput.disabled = true;
+  message.textContent = "正在上传并逐页 OCR，请等待识别完成...";
   try {
-    const response = await fetch("/upload", { method: "POST", body: new FormData(form) });
+    const response = await fetch("/upload", { method: "POST", body: uploadBody });
     if (!response.ok) {
       const detail = await response.json();
       throw new Error(detail.detail || "上传失败");
@@ -228,7 +297,10 @@ deleteButton.addEventListener("click", async () => {
   dialogMessage.textContent = "正在删除...";
   try {
     const response = await fetch(`/api/papers/${encodeURIComponent(selectedFilename)}`, { method: "DELETE" });
-    if (!response.ok) throw new Error("删除失败");
+    if (!response.ok) {
+      const result = await response.json();
+      throw new Error(result.detail || "删除失败");
+    }
     paperDialog.close();
     await loadPapers();
   } catch (error) {

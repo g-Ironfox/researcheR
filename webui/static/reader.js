@@ -11,6 +11,12 @@ const pageTotal = document.querySelector("#page-total");
 const zoomOutButton = document.querySelector("#zoom-out");
 const zoomInButton = document.querySelector("#zoom-in");
 const copyPageButton = document.querySelector("#copy-page");
+const exportDialog = document.querySelector("#export-dialog");
+const exportStartInput = document.querySelector("#export-start");
+const exportEndInput = document.querySelector("#export-end");
+const exportForm = document.querySelector("#export-form");
+const exportPageCount = document.querySelector("#export-page-count");
+const exportErrorMessage = document.querySelector("#export-error");
 const selectionOverlay = document.createElement("div");
 selectionOverlay.className = "selection-overlay";
 document.body.append(selectionOverlay);
@@ -179,12 +185,13 @@ function canvasToPng(canvas) {
   });
 }
 
-async function renderAllPagesToPng() {
+async function renderPagesToPng(startPage, endPage) {
   // Keep export rendering separate from the reader's lazy rendering and zoom.
   const targetWidth = 1440;
   const maxSide = 16000;
   const maxPixels = 32000000;
-  const aspectRatios = entries.map((entry) => entry.naturalHeight / entry.naturalWidth);
+  const selectedEntries = entries.slice(startPage - 1, endPage);
+  const aspectRatios = selectedEntries.map((entry) => entry.naturalHeight / entry.naturalWidth);
   const totalRatio = aspectRatios.reduce((sum, ratio) => sum + ratio, 0);
   const width = Math.floor(Math.min(targetWidth, maxSide / totalRatio, Math.sqrt(maxPixels / totalRatio)));
   if (width < 320) throw new Error("文档过长，合并长图会导致文字过小，请使用较短的 PDF");
@@ -199,8 +206,8 @@ async function renderAllPagesToPng() {
     context.fillStyle = "#fff";
     context.fillRect(0, 0, output.width, output.height);
     let y = 0;
-    for (const [index, entry] of entries.entries()) {
-      message.textContent = `正在渲染第 ${index + 1} / ${entries.length} 页…`;
+    for (const [index, entry] of selectedEntries.entries()) {
+      message.textContent = `正在渲染第 ${startPage + index} / ${endPage} 页…`;
       const viewport = entry.page.getViewport({ scale: width / entry.naturalWidth });
       pageCanvas.width = width;
       pageCanvas.height = Math.ceil(viewport.height);
@@ -216,31 +223,59 @@ async function renderAllPagesToPng() {
   }
 }
 
-copyPageButton.addEventListener("click", async () => {
-  if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") {
-    message.textContent = "当前浏览器无法复制图片，请通过 HTTPS 或 localhost 使用支持图片剪贴板的浏览器";
+copyPageButton.addEventListener("click", () => {
+  if (!entries.length || copyPageButton.disabled) return;
+  exportStartInput.max = String(entries.length);
+  exportEndInput.max = String(entries.length);
+  exportStartInput.value = "1";
+  exportEndInput.value = String(entries.length);
+  exportPageCount.textContent = "共 " + entries.length + " 页 · 输出为一张 PNG";
+  exportErrorMessage.textContent = "";
+  exportDialog.showModal();
+});
+
+exportForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const startPage = Number.parseInt(exportStartInput.value, 10);
+  const endPage = Number.parseInt(exportEndInput.value, 10);
+  if (!Number.isInteger(startPage) || !Number.isInteger(endPage)
+    || startPage < 1 || endPage > entries.length || startPage > endPage) {
+    exportErrorMessage.textContent = "请输入有效范围，且起始页不能大于结束页。";
+    (startPage > endPage ? exportStartInput : exportEndInput).focus();
     return;
   }
-  if (!entries.length || copyPageButton.disabled) return;
+  exportErrorMessage.textContent = "";
+  if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") {
+    exportErrorMessage.textContent = "当前浏览器无法复制图片，请通过 HTTPS 或 localhost 使用。";
+    return;
+  }
+  if (copyPageButton.disabled) return;
   copyPageButton.disabled = true;
   let exportError;
   try {
-    // Supply the PNG promise immediately, while the click's user activation is active.
-    const png = renderAllPagesToPng().catch((error) => {
+    const png = renderPagesToPng(startPage, endPage).catch((error) => {
       exportError = error;
       throw error;
     });
-    const results = await Promise.allSettled([png, navigator.clipboard.write([new ClipboardItem({ "image/png": png })])]);
+    const results = await Promise.allSettled([
+      png,
+      navigator.clipboard.write([new ClipboardItem({ "image/png": png })]),
+    ]);
     const failure = results.find((result) => result.status === "rejected");
     if (failure) throw failure.reason;
-    message.textContent = `已将全部 ${entries.length} 页合并为一张 PNG 并复制到剪贴板`;
+    message.textContent = "第 " + startPage + "–" + endPage + " 页已合并为 PNG 并复制到剪贴板";
+    exportDialog.close();
   } catch (error) {
-    message.textContent = exportError?.message || (error.name === "NotAllowedError"
-      ? "无法写入剪贴板，请保持阅读页处于前台并允许剪贴板权限后重试"
-      : "复制 PNG 失败，请重试或检查浏览器的图片剪贴板支持");
+    exportErrorMessage.textContent = exportError?.message || (error.name === "NotAllowedError"
+      ? "无法写入剪贴板，请保持阅读页位于前台并检查浏览器权限。"
+      : "复制 PNG 失败，请重试。");
   } finally {
     copyPageButton.disabled = false;
   }
+});
+
+exportDialog.querySelectorAll("[data-close-export]").forEach((button) => {
+  button.addEventListener("click", () => exportDialog.close());
 });
 
 let pageUpdateScheduled = false;

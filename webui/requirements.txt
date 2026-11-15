@@ -3,3 +3,4 @@ uvicorn[standard]
 python-multipart
 pypdf
 PyMuPDF
+httpx>=0.28,<1

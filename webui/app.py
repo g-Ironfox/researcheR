@@ -11,9 +11,13 @@ from pydantic import BaseModel
 import fitz
 from pypdf import PdfReader
 
+from ocr import read_ocr_summary, recognize_paper
+
 
 UPLOAD_DIR = Path(__file__).parent / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+ocr_in_progress: set[str] = set()
 
 app = FastAPI(title="论文库")
 app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
@@ -62,6 +66,8 @@ async def list_papers(
             "starred": metadata["starred"],
             "filename": paper.name,
             "size_kb": round(paper.stat().st_size / 1024),
+            **read_ocr_summary(paper),
+            **({"ocr_status": "processing"} if paper.name in ocr_in_progress else {}),
         })
     papers_per_page = 20
     total = len(matches)
@@ -102,8 +108,18 @@ def get_paper_path(filename: str) -> Path:
     return path
 
 
+async def run_paper_ocr(path: Path, original_filename: str) -> dict[str, str | bool]:
+    if path.name in ocr_in_progress:
+        raise HTTPException(status_code=409, detail="这篇论文正在 OCR，请等待识别完成")
+    ocr_in_progress.add(path.name)
+    try:
+        return await recognize_paper(path, original_filename)
+    finally:
+        ocr_in_progress.discard(path.name)
+
+
 @app.post("/upload")
-async def upload(files: Annotated[list[UploadFile], File()]) -> dict[str, list[str]]:
+async def upload(files: Annotated[list[UploadFile], File()]) -> dict:
     if not files:
         raise HTTPException(status_code=400, detail="请至少选择一个 PDF 文件")
 
@@ -126,6 +142,7 @@ async def upload(files: Annotated[list[UploadFile], File()]) -> dict[str, list[s
 
     filenames: list[str] = []
     duplicates: list[str] = []
+    ocr_results = []
     for file, header in zip(files, headers):
         destination = UPLOAD_DIR / f"{uuid4().hex}.pdf"
         digest = sha256()
@@ -153,7 +170,9 @@ async def upload(files: Annotated[list[UploadFile], File()]) -> dict[str, list[s
             encoding="utf-8",
         )
         filenames.append(destination.name)
-    return {"filenames": filenames, "duplicates": duplicates}
+        summary = await run_paper_ocr(destination, file.filename)
+        ocr_results.append({"filename": destination.name, "name": file.filename, **summary})
+    return {"filenames": filenames, "duplicates": duplicates, "ocr_results": ocr_results}
 
 
 @app.get("/api/papers/{filename}")
@@ -182,9 +201,37 @@ async def update_paper_star(filename: str, star: PaperStar) -> dict[str, bool]:
 @app.delete("/api/papers/{filename}", status_code=204)
 async def delete_paper(filename: str) -> None:
     path = get_paper_path(filename)
+    if filename in ocr_in_progress:
+        raise HTTPException(status_code=409, detail="这篇论文正在 OCR，请等待识别完成后再删除")
     path.unlink()
     path.with_suffix(".json").unlink(missing_ok=True)
     path.with_suffix(".thumb.png").unlink(missing_ok=True)
+    path.with_suffix(".ocr.json").unlink(missing_ok=True)
+
+
+@app.post("/api/papers/{filename}/ocr")
+async def retry_paper_ocr(filename: str) -> dict[str, str | bool]:
+    path = get_paper_path(filename)
+    if read_ocr_summary(path)["ocr_status"] == "completed":
+        raise HTTPException(status_code=409, detail="这篇论文已完成 OCR")
+    original_filename = f"{read_paper_metadata(path)['title']}.pdf"
+    try:
+        document = json.loads(path.with_suffix(".ocr.json").read_text(encoding="utf-8"))
+        original = document.get("source", {}).get("original_filename")
+        if isinstance(original, str) and original.strip():
+            original_filename = original
+    except (OSError, ValueError, AttributeError):
+        pass
+    return await run_paper_ocr(path, original_filename)
+
+
+@app.get("/api/papers/{filename}/ocr")
+async def download_paper_ocr(filename: str) -> FileResponse:
+    path = get_paper_path(filename)
+    result = path.with_suffix(".ocr.json")
+    if not result.is_file():
+        raise HTTPException(status_code=404, detail="这篇论文还没有 OCR JSON")
+    return FileResponse(result, media_type="application/json", filename=result.name)
 
 
 @app.get("/api/papers/{filename}/preview")
