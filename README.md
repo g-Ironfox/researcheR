@@ -44,3 +44,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build web
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.dev.yml exec webui python -m unittest discover -s tests -v
 ```
+
+## Markdown 阅读器
+
+OCR 完成后，在论文列表点击 **生成 Markdown** 会打开 Markdown 阅读器，并将完整的 OCR 原始 `result` 一次性发送给 DeepSeek Chat 模型整理；首次生成按模型 API 用量计费。默认模型为 `deepseek-flash`，可在 `.env` 中通过 `DEEPSEEK_CHAT_MODEL` 修改。OCR 原始 JSON 保持不变，Markdown 单独保存为 `data/uploads/<论文ID>.md`；阅读器支持下载和重新生成。若模型输入超出上下文或输出不完整，生成会报错且不会覆盖已有 Markdown。删除论文会同时删除 Markdown 文件。

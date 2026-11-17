@@ -75,6 +75,11 @@ function renderPapers() {
     readLink.target = "_blank";
     readLink.rel = "noopener";
     readLink.textContent = "阅读";
+    const markdownLink = document.createElement("a");
+    markdownLink.className = "markdown-link";
+    markdownLink.href = `/markdown/${encodeURIComponent(paper.filename)}`;
+    markdownLink.textContent = paper.markdown_available ? "Markdown" : "生成 Markdown";
+    markdownLink.setAttribute("aria-label", `打开《${paper.name}》的 Markdown 阅读器`);
     const size = document.createElement("span");
     size.textContent = `${paper.size_kb} KB`;
     const actions = document.createElement("div");
@@ -140,11 +145,13 @@ function renderPapers() {
       ocrButton.className = "ocr-button";
       ocrButton.textContent = processing ? "识别中…" : paper.ocr_status === "not_started" ? "开始 OCR" : "重新 OCR";
       ocrButton.disabled = processing;
-      ocrButton.setAttribute("aria-label", `${ocrButton.textContent}??${paper.name}?`);
+      ocrButton.setAttribute("aria-label", `${ocrButton.textContent}\uFF1A\u300A${paper.name}\u300B`);
       ocrButton.addEventListener("click", () => retryOcr(paper));
       ocrInfo.append(ocrButton);
     }
-    actions.append(starButton, readLink, ocrInfo, size);
+    actions.append(starButton, readLink);
+    if (["completed", "partial"].includes(paper.ocr_status)) actions.append(markdownLink);
+    actions.append(ocrInfo, size);
     item.append(details, actions);
     paperList.append(item);
   });

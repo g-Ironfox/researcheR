@@ -4,3 +4,5 @@ python-multipart
 pypdf
 PyMuPDF
 httpx>=0.28,<1
+Markdown>=3.7,<4
+bleach>=6.2,<7

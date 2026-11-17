@@ -17,6 +17,7 @@ services:
       - REDIS_PORT=${REDIS_PORT}
       - TZ=${TZ}
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - DEEPSEEK_CHAT_MODEL=${DEEPSEEK_CHAT_MODEL:-deepseek-flash}
     volumes:
       - ./data/uploads:/app/uploads
     networks:

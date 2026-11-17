@@ -12,12 +12,14 @@ import fitz
 from pypdf import PdfReader
 
 from ocr import read_ocr_summary, recognize_paper
+from markdown_service import generate_markdown, render_markdown, write_markdown
 
 
 UPLOAD_DIR = Path(__file__).parent / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 ocr_in_progress: set[str] = set()
+markdown_in_progress: set[str] = set()
 
 app = FastAPI(title="论文库")
 app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
@@ -45,6 +47,12 @@ async def read_paper(filename: str) -> FileResponse:
     return FileResponse(Path(__file__).parent / "static" / "reader.html")
 
 
+@app.get("/markdown/{filename}")
+async def read_paper_markdown(filename: str) -> FileResponse:
+    get_paper_path(filename)
+    return FileResponse(Path(__file__).parent / "static" / "markdown.html")
+
+
 @app.get("/api/papers")
 async def list_papers(
     page: int = Query(1, ge=1),
@@ -67,6 +75,7 @@ async def list_papers(
             "filename": paper.name,
             "size_kb": round(paper.stat().st_size / 1024),
             **read_ocr_summary(paper),
+            "markdown_available": paper.with_suffix(".md").is_file(),
             **({"ocr_status": "processing"} if paper.name in ocr_in_progress else {}),
         })
     papers_per_page = 20
@@ -109,11 +118,15 @@ def get_paper_path(filename: str) -> Path:
 
 
 async def run_paper_ocr(path: Path, original_filename: str) -> dict[str, str | bool]:
+    if path.name in markdown_in_progress:
+        raise HTTPException(status_code=409, detail="这篇论文正在生成 Markdown，请等待完成后再 OCR")
     if path.name in ocr_in_progress:
         raise HTTPException(status_code=409, detail="这篇论文正在 OCR，请等待识别完成")
     ocr_in_progress.add(path.name)
     try:
-        return await recognize_paper(path, original_filename)
+        summary = await recognize_paper(path, original_filename)
+        path.with_suffix(".md").unlink(missing_ok=True)
+        return summary
     finally:
         ocr_in_progress.discard(path.name)
 
@@ -203,10 +216,13 @@ async def delete_paper(filename: str) -> None:
     path = get_paper_path(filename)
     if filename in ocr_in_progress:
         raise HTTPException(status_code=409, detail="这篇论文正在 OCR，请等待识别完成后再删除")
+    if filename in markdown_in_progress:
+        raise HTTPException(status_code=409, detail="这篇论文正在生成 Markdown，请等待完成后再删除")
     path.unlink()
     path.with_suffix(".json").unlink(missing_ok=True)
     path.with_suffix(".thumb.png").unlink(missing_ok=True)
     path.with_suffix(".ocr.json").unlink(missing_ok=True)
+    path.with_suffix(".md").unlink(missing_ok=True)
 
 
 @app.post("/api/papers/{filename}/ocr")
@@ -232,6 +248,83 @@ async def download_paper_ocr(filename: str) -> FileResponse:
     if not result.is_file():
         raise HTTPException(status_code=404, detail="这篇论文还没有 OCR JSON")
     return FileResponse(result, media_type="application/json", filename=result.name)
+
+
+def read_paper_ocr_result(path: Path) -> dict:
+    result_path = path.with_suffix(".ocr.json")
+    if not result_path.is_file():
+        raise HTTPException(status_code=409, detail="请先完成 OCR，再生成 Markdown")
+    try:
+        document = json.loads(result_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise HTTPException(status_code=422, detail="OCR JSON 无法读取") from error
+    if not isinstance(document, dict):
+        raise HTTPException(status_code=422, detail="OCR JSON 格式无效")
+    if document.get("status") not in {"completed", "partial"}:
+        raise HTTPException(status_code=409, detail="OCR 未成功，请先重新 OCR")
+    if not isinstance(document.get("result"), dict):
+        raise HTTPException(status_code=422, detail="OCR JSON 中没有可用的原始识别结果")
+    return document["result"]
+
+
+def render_paper_markdown(content: str) -> str:
+    try:
+        return render_markdown(content)
+    except RuntimeError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+
+@app.get("/api/papers/{filename}/markdown")
+async def get_paper_markdown(filename: str) -> dict[str, str | bool]:
+    path = get_paper_path(filename)
+    markdown_path = path.with_suffix(".md")
+    try:
+        content = markdown_path.read_text(encoding="utf-8") if markdown_path.is_file() else ""
+    except OSError as error:
+        raise HTTPException(status_code=500, detail="无法读取 Markdown 文件") from error
+    metadata = read_paper_metadata(path)
+    return {
+        "title": str(metadata["title"]),
+        "status": "generating" if filename in markdown_in_progress else "ready" if content else "not_generated",
+        "content": content,
+        "html": render_paper_markdown(content) if content else "",
+    }
+
+
+@app.post("/api/papers/{filename}/markdown")
+async def create_paper_markdown(filename: str, force: bool = Query(False)) -> dict[str, str | bool]:
+    path = get_paper_path(filename)
+    if filename in ocr_in_progress:
+        raise HTTPException(status_code=409, detail="OCR 尚未完成，请稍后生成 Markdown")
+    if filename in markdown_in_progress:
+        raise HTTPException(status_code=409, detail="Markdown 正在生成，请稍候")
+    markdown_path = path.with_suffix(".md")
+    if markdown_path.is_file() and not force:
+        return await get_paper_markdown(filename)
+    ocr_result = read_paper_ocr_result(path)
+    markdown_in_progress.add(filename)
+    try:
+        content = await generate_markdown(ocr_result)
+        html = render_paper_markdown(content)
+        write_markdown(path, content)
+        return {
+            "title": str(read_paper_metadata(path)["title"]),
+            "status": "ready",
+            "content": content,
+            "html": html,
+        }
+    except ValueError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    finally:
+        markdown_in_progress.discard(filename)
+
+
+@app.get("/api/papers/{filename}/markdown/download")
+async def download_paper_markdown(filename: str) -> FileResponse:
+    path = get_paper_path(filename).with_suffix(".md")
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Markdown 尚未生成")
+    return FileResponse(path, media_type="text/markdown; charset=utf-8", filename=path.name)
 
 
 @app.get("/api/papers/{filename}/preview")

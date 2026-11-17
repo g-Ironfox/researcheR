@@ -75,6 +75,8 @@ li:not(.empty):hover { background: #edf3f1; }
 .star-button.is-starred path { fill: currentColor; }
 .read-link { color: var(--accent); font-size: 13px; text-decoration: none; }
 .read-link:hover { text-decoration: underline; }
+.markdown-link { display: inline-flex; align-items: center; min-height: 28px; padding: 0 8px; border: 1px solid var(--line); color: var(--accent); font-size: 12px; text-decoration: none; white-space: nowrap; }
+.markdown-link:hover { border-color: var(--accent); background: #edf3f1; }
 li span { flex: none; color: var(--muted); font-size: 12px; }
 .empty { color: var(--muted); font-size: 14px; }
 dialog { width: min(900px, calc(100% - 32px)); max-height: calc(100% - 32px); padding: 0; border: 1px solid var(--line); background: #fff; color: var(--ink); }
@@ -139,6 +141,34 @@ dialog::backdrop { background: rgb(32 43 43 / 35%); }
 .export-dialog-actions .export-cancel:hover { border-color: var(--accent); background: #edf3f1; }
 #reader-message { position: fixed; left: 16px; bottom: 16px; z-index: 3; max-width: min(560px, calc(100vw - 32px)); margin: 0; padding: 9px 12px; border: 1px solid var(--line); background: #fff; box-shadow: 0 2px 8px rgb(32 43 43 / 16%); color: var(--ink); font-size: 13px; line-height: 1.45; text-align: left; pointer-events: none; }
 #reader-message:empty { display: none; }
+.markdown-header .header-inner { align-items: center; justify-content: space-between; gap: 16px; }
+.markdown-header .header-note { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.markdown-tools { display: flex; flex: none; align-items: center; gap: 8px; }
+.markdown-tools a, .markdown-tools button { display: inline-flex; align-items: center; justify-content: center; width: auto; min-width: 0; min-height: 34px; padding: 0 10px; border: 1px solid var(--line); background: #fff; color: var(--ink); font: inherit; font-size: 12px; text-decoration: none; }
+.markdown-tools a:hover, .markdown-tools button:hover:not(:disabled) { border-color: var(--accent); background: #edf3f1; color: var(--accent); }
+.markdown-tools a[hidden], .markdown-tools button[hidden] { display: none; }
+.markdown-main { max-width: 1160px; padding: 30px 24px 64px; }
+.markdown-status { margin: 0 auto 18px; max-width: 900px; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.markdown-status:empty { display: none; }
+.markdown-status.is-error { color: #a33129; }
+.markdown-prose { max-width: 900px; margin: 0 auto; color: var(--ink); font-family: Georgia, "Microsoft YaHei", serif; font-size: 16px; line-height: 1.8; overflow-wrap: anywhere; }
+.markdown-prose h1, .markdown-prose h2, .markdown-prose h3, .markdown-prose h4 { margin: 1.8em 0 .7em; color: var(--ink); line-height: 1.35; }
+.markdown-prose h1 { font-size: 30px; }
+.markdown-prose h2 { padding-bottom: 7px; border-bottom: 1px solid var(--line); font-size: 23px; }
+.markdown-prose h3 { font-size: 19px; }
+.markdown-prose p { margin: 0 0 1.1em; }
+.markdown-prose a { color: var(--accent); overflow-wrap: anywhere; }
+.markdown-prose blockquote { margin: 1.2em 0; padding: 4px 16px; border-left: 3px solid var(--accent); color: var(--muted); }
+.markdown-prose ul, .markdown-prose ol { margin: 0 0 1.2em; padding-left: 1.6em; list-style: revert; }
+.markdown-prose li { display: list-item; min-height: 0; padding: 0; border: 0; }
+.markdown-prose li:not(.empty):hover { background: transparent; }
+.markdown-prose table { width: 100%; margin: 1.4em 0; border-collapse: collapse; font-family: "Microsoft YaHei", sans-serif; font-size: 14px; }
+.markdown-prose th, .markdown-prose td { padding: 8px 10px; border: 1px solid var(--line); text-align: left; vertical-align: top; }
+.markdown-prose th { background: #edf3f1; }
+.markdown-prose pre { max-width: 100%; overflow-x: auto; padding: 14px; background: #202b2b; color: #f7f9f8; font-size: 13px; line-height: 1.6; }
+.markdown-prose code { padding: 1px 4px; background: #edf3f1; font-family: Consolas, monospace; font-size: .9em; }
+.markdown-prose pre code { padding: 0; background: transparent; color: inherit; }
+.markdown-prose hr { border: 0; border-top: 1px solid var(--line); }
 #pdf-pages { display: flex; flex-direction: column; gap: 20px; }
 .pdf-page { position: relative; margin: 0 auto; background: #fff; box-shadow: 0 2px 12px rgb(32 43 43 / 15%); scroll-margin-top: 76px; }
 .pdf-page canvas { display: block; width: 100%; height: 100%; }
@@ -151,6 +181,9 @@ dialog::backdrop { background: rgb(32 43 43 / 35%); }
 
 @media (max-width: 600px) {
   .header-inner { padding: 16px 20px; }
+  .markdown-header .header-inner { align-items: stretch; flex-direction: column; gap: 10px; }
+  .markdown-tools { flex-wrap: wrap; }
+  .markdown-tools a, .markdown-tools button { flex: 1 1 auto; }
   main { padding: 24px 20px 40px; }
   .upload-panel { grid-template-columns: 1fr; gap: 8px; }
   button { width: 100%; min-height: 42px; }
