@@ -129,6 +129,48 @@ class MarkdownTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.pdf.with_suffix(".ocr.json").read_bytes(), raw_ocr)
         self.assertNotIn("paper.pdf", papers_app.markdown_in_progress)
 
+    async def test_chinese_translation_is_cached_selectable_and_downloadable(self):
+        self.pdf.with_suffix(".md").write_text("# Original\n\nFull paper text.\n", encoding="utf-8")
+        calls = []
+
+        def handler(request):
+            payload = json.loads(request.content)
+            calls.append(payload)
+            return self.completion("# 中文标题\n\n完整论文内容。\n")
+
+        with patch.dict("os.environ", {"DEEPSEEK_API_KEY": "test-key"}), self.mock_model(handler):
+            translated = await self.client.post("/api/papers/paper.pdf/markdown?language=zh")
+            cached = await self.client.post("/api/papers/paper.pdf/markdown?language=zh")
+            original = await self.client.get("/api/papers/paper.pdf/markdown?language=original")
+            download = await self.client.get("/api/papers/paper.pdf/markdown/download?language=zh")
+
+        self.assertEqual(translated.status_code, 200)
+        self.assertEqual(translated.json()["content"], "# 中文标题\n\n完整论文内容。\n")
+        self.assertEqual(cached.json()["status"], "ready")
+        self.assertEqual(len(calls), 1)
+        self.assertIn("Original", calls[0]["messages"][1]["content"])
+        self.assertEqual(original.json()["content"], "# Original\n\nFull paper text.\n")
+        self.assertEqual(download.text, translated.json()["content"])
+
+    async def test_translation_requires_source_markdown_and_failed_translation_is_not_saved(self):
+        missing = await self.client.post("/api/papers/paper.pdf/markdown?language=zh")
+        self.assertEqual(missing.status_code, 409)
+        self.pdf.with_suffix(".md").write_text("# Source\n", encoding="utf-8")
+        with patch.dict("os.environ", {"DEEPSEEK_API_KEY": "test-key"}), self.mock_model(
+            lambda request: self.completion("# Truncated", "length")
+        ):
+            failed = await self.client.post("/api/papers/paper.pdf/markdown?language=zh")
+        self.assertEqual(failed.status_code, 502)
+        self.assertFalse(self.pdf.with_suffix(".zh.md").exists())
+
+    async def test_regenerating_original_invalidates_cached_translation(self):
+        self.pdf.with_suffix(".md").write_text("# Old source\n", encoding="utf-8")
+        self.pdf.with_suffix(".zh.md").write_text("# 旧译文\n", encoding="utf-8")
+        with patch("app.generate_markdown", return_value="# New source\n"):
+            response = await self.client.post("/api/papers/paper.pdf/markdown?force=true")
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(self.pdf.with_suffix(".zh.md").exists())
+
     async def test_missing_or_failed_ocr_is_rejected(self):
         self.pdf.with_suffix(".ocr.json").unlink()
         response = await self.client.post("/api/papers/paper.pdf/markdown")

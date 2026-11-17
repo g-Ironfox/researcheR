@@ -146,6 +146,7 @@ dialog::backdrop { background: rgb(32 43 43 / 35%); }
 .markdown-tools { display: flex; flex: none; align-items: center; gap: 8px; }
 .markdown-tools a, .markdown-tools button { display: inline-flex; align-items: center; justify-content: center; width: auto; min-width: 0; min-height: 34px; padding: 0 10px; border: 1px solid var(--line); background: #fff; color: var(--ink); font: inherit; font-size: 12px; text-decoration: none; }
 .markdown-tools a:hover, .markdown-tools button:hover:not(:disabled) { border-color: var(--accent); background: #edf3f1; color: var(--accent); }
+.markdown-tools button[aria-pressed="true"] { border-color: var(--accent); background: #edf3f1; color: var(--accent); }
 .markdown-tools a[hidden], .markdown-tools button[hidden] { display: none; }
 .markdown-main { max-width: 1160px; padding: 30px 24px 64px; }
 .markdown-status { margin: 0 auto 18px; max-width: 900px; color: var(--muted); font-size: 13px; line-height: 1.5; }

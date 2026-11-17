@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Markdown 阅读器 - 论文库</title>
   <link rel="stylesheet" href="/static/styles.css?v=26">
-  <script src="/static/markdown-reader.js?v=2" defer></script>
+  <script src="/static/markdown-reader.js?v=3" defer></script>
 </head>
 <body>
   <header class="markdown-header">
@@ -14,6 +14,8 @@
       <nav class="markdown-tools" aria-label="Markdown 阅读工具">
         <a href="/" title="返回论文库">论文库</a>
         <a id="markdown-pdf-link" href="#" title="打开 PDF 阅读器">PDF</a>
+        <button id="markdown-language-original" type="button" aria-pressed="true">原文</button>
+        <button id="markdown-language-zh" type="button" aria-pressed="false">中文</button>
         <a id="markdown-download" href="#" download hidden>下载 .md</a>
         <button id="markdown-regenerate" type="button" hidden>重新生成</button>
       </nav>

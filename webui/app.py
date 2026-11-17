@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import uuid4
 from hashlib import sha256
 import json
@@ -12,7 +12,7 @@ import fitz
 from pypdf import PdfReader
 
 from ocr import read_ocr_summary, recognize_paper
-from markdown_service import generate_markdown, render_markdown, write_markdown
+from markdown_service import generate_markdown, render_markdown, translate_markdown, write_markdown
 
 
 UPLOAD_DIR = Path(__file__).parent / "uploads"
@@ -20,6 +20,8 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 ocr_in_progress: set[str] = set()
 markdown_in_progress: set[str] = set()
+translation_in_progress: set[str] = set()
+MarkdownLanguage = Literal["original", "zh"]
 
 app = FastAPI(title="论文库")
 app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
@@ -118,6 +120,8 @@ def get_paper_path(filename: str) -> Path:
 
 
 async def run_paper_ocr(path: Path, original_filename: str) -> dict[str, str | bool]:
+    if path.name in translation_in_progress:
+        raise HTTPException(status_code=409, detail="这篇论文正在翻译，请等待完成后再 OCR")
     if path.name in markdown_in_progress:
         raise HTTPException(status_code=409, detail="这篇论文正在生成 Markdown，请等待完成后再 OCR")
     if path.name in ocr_in_progress:
@@ -126,6 +130,7 @@ async def run_paper_ocr(path: Path, original_filename: str) -> dict[str, str | b
     try:
         summary = await recognize_paper(path, original_filename)
         path.with_suffix(".md").unlink(missing_ok=True)
+        path.with_suffix(".zh.md").unlink(missing_ok=True)
         return summary
     finally:
         ocr_in_progress.discard(path.name)
@@ -216,6 +221,8 @@ async def delete_paper(filename: str) -> None:
     path = get_paper_path(filename)
     if filename in ocr_in_progress:
         raise HTTPException(status_code=409, detail="这篇论文正在 OCR，请等待识别完成后再删除")
+    if filename in translation_in_progress:
+        raise HTTPException(status_code=409, detail="这篇论文正在翻译，请等待完成后再删除")
     if filename in markdown_in_progress:
         raise HTTPException(status_code=409, detail="这篇论文正在生成 Markdown，请等待完成后再删除")
     path.unlink()
@@ -223,6 +230,7 @@ async def delete_paper(filename: str) -> None:
     path.with_suffix(".thumb.png").unlink(missing_ok=True)
     path.with_suffix(".ocr.json").unlink(missing_ok=True)
     path.with_suffix(".md").unlink(missing_ok=True)
+    path.with_suffix(".zh.md").unlink(missing_ok=True)
 
 
 @app.post("/api/papers/{filename}/ocr")
@@ -274,41 +282,65 @@ def render_paper_markdown(content: str) -> str:
         raise HTTPException(status_code=503, detail=str(error)) from error
 
 
+def paper_markdown_path(path: Path, language: MarkdownLanguage) -> Path:
+    return path.with_suffix(".zh.md" if language == "zh" else ".md")
+
+
 @app.get("/api/papers/{filename}/markdown")
-async def get_paper_markdown(filename: str) -> dict[str, str | bool]:
+async def get_paper_markdown(
+    filename: str, language: MarkdownLanguage = Query("original"),
+) -> dict[str, str | bool]:
     path = get_paper_path(filename)
-    markdown_path = path.with_suffix(".md")
+    markdown_path = paper_markdown_path(path, language)
     try:
         content = markdown_path.read_text(encoding="utf-8") if markdown_path.is_file() else ""
     except OSError as error:
         raise HTTPException(status_code=500, detail="无法读取 Markdown 文件") from error
-    metadata = read_paper_metadata(path)
+    in_progress = translation_in_progress if language == "zh" else markdown_in_progress
     return {
-        "title": str(metadata["title"]),
-        "status": "generating" if filename in markdown_in_progress else "ready" if content else "not_generated",
+        "title": str(read_paper_metadata(path)["title"]),
+        "language": language,
+        "status": "generating" if filename in in_progress else "ready" if content else "not_generated",
         "content": content,
         "html": render_paper_markdown(content) if content else "",
     }
 
 
 @app.post("/api/papers/{filename}/markdown")
-async def create_paper_markdown(filename: str, force: bool = Query(False)) -> dict[str, str | bool]:
+async def create_paper_markdown(
+    filename: str, force: bool = Query(False), language: MarkdownLanguage = Query("original"),
+) -> dict[str, str | bool]:
     path = get_paper_path(filename)
     if filename in ocr_in_progress:
         raise HTTPException(status_code=409, detail="OCR 尚未完成，请稍后生成 Markdown")
     if filename in markdown_in_progress:
         raise HTTPException(status_code=409, detail="Markdown 正在生成，请稍候")
-    markdown_path = path.with_suffix(".md")
+    if filename in translation_in_progress:
+        raise HTTPException(status_code=409, detail="中文正在翻译，请稍候")
+    markdown_path = paper_markdown_path(path, language)
     if markdown_path.is_file() and not force:
-        return await get_paper_markdown(filename)
-    ocr_result = read_paper_ocr_result(path)
-    markdown_in_progress.add(filename)
+        return await get_paper_markdown(filename, language)
+    if language == "zh":
+        source_path = paper_markdown_path(path, "original")
+        try:
+            source = source_path.read_text(encoding="utf-8") if source_path.is_file() else ""
+        except OSError as error:
+            raise HTTPException(status_code=500, detail="无法读取 Markdown 原文") from error
+        if not source.strip():
+            raise HTTPException(status_code=409, detail="请先生成 Markdown 原文，再翻译为中文")
+    else:
+        ocr_result = read_paper_ocr_result(path)
+    in_progress = translation_in_progress if language == "zh" else markdown_in_progress
+    in_progress.add(filename)
     try:
-        content = await generate_markdown(ocr_result)
+        content = await translate_markdown(source) if language == "zh" else await generate_markdown(ocr_result)
         html = render_paper_markdown(content)
-        write_markdown(path, content)
+        write_markdown(path, content, suffix=".zh.md" if language == "zh" else ".md")
+        if language == "original":
+            paper_markdown_path(path, "zh").unlink(missing_ok=True)
         return {
             "title": str(read_paper_metadata(path)["title"]),
+            "language": language,
             "status": "ready",
             "content": content,
             "html": html,
@@ -316,14 +348,16 @@ async def create_paper_markdown(filename: str, force: bool = Query(False)) -> di
     except ValueError as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
     finally:
-        markdown_in_progress.discard(filename)
+        in_progress.discard(filename)
 
 
 @app.get("/api/papers/{filename}/markdown/download")
-async def download_paper_markdown(filename: str) -> FileResponse:
-    path = get_paper_path(filename).with_suffix(".md")
+async def download_paper_markdown(
+    filename: str, language: MarkdownLanguage = Query("original"),
+) -> FileResponse:
+    path = paper_markdown_path(get_paper_path(filename), language)
     if not path.is_file():
-        raise HTTPException(status_code=404, detail="Markdown 尚未生成")
+        raise HTTPException(status_code=404, detail="中文译文尚未生成" if language == "zh" else "Markdown 尚未生成")
     return FileResponse(path, media_type="text/markdown; charset=utf-8", filename=path.name)
 
 
