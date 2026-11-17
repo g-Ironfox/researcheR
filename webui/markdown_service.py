@@ -1,9 +1,12 @@
 """Generate a faithful Markdown version from a paper's complete OCR response."""
 
 import asyncio
+import html as html_module
 import json
 import os
+import re
 from pathlib import Path
+from uuid import uuid4
 
 import httpx
 
@@ -93,6 +96,30 @@ async def request_markdown(messages: list[dict[str, str]], operation: str) -> st
         raise
 
 
+def protect_markdown_regions(source: str, *, code: bool = False, math: bool = False) -> tuple[str, dict[str, str]]:
+    """Replace code or TeX regions with parser-safe tokens, preserving their source text."""
+    if code == math:
+        raise ValueError("Choose exactly one Markdown region type")
+    if code:
+        pattern = re.compile(
+            r"(?ms)^(`{3,}|~{3,})[^\n]*\n.*?^\1[ \t]*$|(`+)(?!`).*?(?<!`)\2(?!`)")
+    else:
+        pattern = re.compile(
+            r"\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]|"
+            r"\\\([\s\S]*?\\\)|(?<!\\)\$(?!\$)(?=\S)"
+            r"(?:\\.|[^$\n])*?(?<=\S)(?<!\\)\$"
+        )
+    replacements: dict[str, str] = {}
+    salt = uuid4().hex
+
+    def replace(match: re.Match[str]) -> str:
+        token = f"CODEMATH{salt}{len(replacements)}END"
+        replacements[token] = match.group(0)
+        return token
+
+    return pattern.sub(replace, source), replacements
+
+
 def render_markdown(source: str) -> str:
     try:
         import bleach
@@ -100,11 +127,23 @@ def render_markdown(source: str) -> str:
     except ImportError as error:
         raise RuntimeError("Markdown 渲染依赖未安装，请在 Web 容器中安装 requirements.txt 后重试") from error
 
-    html = markdown.markdown(
-        source,
+    protected_source, code_blocks = protect_markdown_regions(source, code=True)
+    protected_source, math_expressions = protect_markdown_regions(protected_source, math=True)
+    for token, original in code_blocks.items():
+        protected_source = protected_source.replace(token, original)
+
+    rendered = markdown.markdown(
+        protected_source,
         extensions=["fenced_code", "tables", "sane_lists", "toc"],
         output_format="html",
     )
+    for token, expression in math_expressions.items():
+        wrapper = "tex-display" if expression.startswith(("$$", r"\[")) else "tex-inline"
+        rendered = rendered.replace(
+            token,
+            f'<span class="{wrapper}">{html_module.escape(expression)}</span>',
+        )
+    html = rendered
     tags = {
         "a", "blockquote", "br", "code", "del", "div", "em", "h1", "h2", "h3",
         "h4", "h5", "h6", "hr", "li", "ol", "p", "pre", "span", "strong",

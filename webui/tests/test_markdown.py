@@ -64,6 +64,16 @@ class MarkdownTests(unittest.IsolatedAsyncioTestCase):
             "message": {"content": content}, "finish_reason": finish_reason,
         }]})
 
+    def test_math_regions_are_preserved_without_parsing_code_examples(self):
+        source = "Inline $x^2$ and \\(a+b\\).\n\n$$\n\\frac{1}{2}\n$$\n\n```tex\n$not_math$\n```\n"
+        without_code, code = markdown_service.protect_markdown_regions(source, code=True)
+        _, math = markdown_service.protect_markdown_regions(without_code, math=True)
+        self.assertEqual(len(code), 1)
+        self.assertEqual(len(math), 3)
+        self.assertNotIn("$not_math$", "".join(math.values()))
+        self.assertIn("$not_math$", "".join(code.values()))
+        self.assertIn(r"\frac{1}{2}", "".join(math.values()))
+
     async def test_generation_sends_entire_raw_ocr_and_keeps_source_json(self):
         captured = {}
 

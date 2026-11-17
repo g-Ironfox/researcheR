@@ -46,9 +46,21 @@ async function readMarkdownResponse(response, fallback) {
   return result;
 }
 
+function typesetMath() {
+  const mathJax = window.MathJax;
+  if (!mathJax?.typesetPromise) return;
+  mathJax.typesetClear?.([article]);
+  mathJax.typesetPromise([article]).catch(() => {
+    status.classList.add("is-error");
+    status.textContent = "公式排版失败，请检查网络连接后重新加载页面。";
+  });
+}
+
 function showDocument(document) {
+  window.MathJax?.typesetClear?.([article]);
   title.textContent = document.title || "Markdown 阅读器";
   article.innerHTML = document.html || "";
+  typesetMath();
   downloadLink.href = `${api}/download?language=${language}`;
   downloadLink.textContent = language === "zh" ? "下载中文 .md" : "下载原文 .md";
   downloadLink.hidden = document.status !== "ready";

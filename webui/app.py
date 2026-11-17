@@ -11,6 +11,8 @@ from pydantic import BaseModel
 import fitz
 from pypdf import PdfReader
 
+from metadata_service import extract_paper_metadata, read_metadata_source
+from reference_service import ReferenceEntry, extract_references, read_reference_source
 from ocr import read_ocr_summary, recognize_paper
 from markdown_service import generate_markdown, render_markdown, translate_markdown, write_markdown
 
@@ -18,6 +20,8 @@ from markdown_service import generate_markdown, render_markdown, translate_markd
 UPLOAD_DIR = Path(__file__).parent / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
+metadata_in_progress: set[str] = set()
+reference_in_progress: set[str] = set()
 ocr_in_progress: set[str] = set()
 markdown_in_progress: set[str] = set()
 translation_in_progress: set[str] = set()
@@ -32,6 +36,7 @@ class PaperMetadata(BaseModel):
     venue: str = ""
     abstract: str = ""
     reference: str = ""
+    references: list[ReferenceEntry] | None = None
 
 
 class PaperStar(BaseModel):
@@ -93,19 +98,22 @@ async def list_papers(
     }
 
 
-def read_paper_metadata(paper: Path) -> dict[str, str | bool]:
+def read_paper_metadata(paper: Path) -> dict:
     metadata_path = paper.with_suffix(".json")
     if not metadata_path.is_file():
-        return {"title": paper.stem, "venue": "", "abstract": "", "reference": "", "starred": False}
+        return {"title": paper.stem, "venue": "", "abstract": "", "reference": "", "references": [], "starred": False}
     try:
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return {"title": paper.stem, "venue": "", "abstract": "", "reference": "", "starred": False}
+        return {"title": paper.stem, "venue": "", "abstract": "", "reference": "", "references": [], "starred": False}
+    if not isinstance(metadata, dict):
+        metadata = {}
     return {
         "title": metadata.get("title") or metadata.get("name") or paper.stem,
         "venue": metadata.get("venue", ""),
         "abstract": metadata.get("abstract", ""),
         "reference": metadata.get("reference", ""),
+        "references": metadata.get("references", []) if isinstance(metadata.get("references", []), list) else [],
         "starred": metadata.get("starred", False),
     }
 
@@ -120,6 +128,10 @@ def get_paper_path(filename: str) -> Path:
 
 
 async def run_paper_ocr(path: Path, original_filename: str) -> dict[str, str | bool]:
+    if path.name in metadata_in_progress:
+        raise HTTPException(status_code=409, detail="正在提取标题和摘要，请完成后再 OCR")
+    if path.name in reference_in_progress:
+        raise HTTPException(status_code=409, detail="正在提取参考文献，请完成后再 OCR")
     if path.name in translation_in_progress:
         raise HTTPException(status_code=409, detail="这篇论文正在翻译，请等待完成后再 OCR")
     if path.name in markdown_in_progress:
@@ -194,15 +206,63 @@ async def upload(files: Annotated[list[UploadFile], File()]) -> dict:
 
 
 @app.get("/api/papers/{filename}")
-async def get_paper_metadata(filename: str) -> dict[str, str | bool]:
+async def get_paper_metadata(filename: str) -> dict:
     return read_paper_metadata(get_paper_path(filename))
 
 
-@app.put("/api/papers/{filename}")
-async def update_paper_metadata(filename: str, metadata: PaperMetadata) -> dict[str, str | bool]:
+@app.post("/api/papers/{filename}/metadata/extract")
+async def extract_paper_details(filename: str) -> dict:
     path = get_paper_path(filename)
+    if filename in ocr_in_progress:
+        raise HTTPException(status_code=409, detail="OCR 尚未完成，请稍后提取标题和摘要")
+    if filename in metadata_in_progress:
+        raise HTTPException(status_code=409, detail="标题和摘要正在提取，请稍候")
+    try:
+        source = read_metadata_source(path)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    metadata_in_progress.add(filename)
+    try:
+        result = await extract_paper_metadata(source)
+        return {**result, "warnings": source["warnings"],
+                "source_pages": [page["page"] for page in source["pages"]]}
+    except ValueError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    finally:
+        metadata_in_progress.discard(filename)
+
+
+@app.post("/api/papers/{filename}/reference", include_in_schema=False)
+@app.post("/api/papers/{filename}/references")
+async def create_paper_references(filename: str) -> dict:
+    path = get_paper_path(filename)
+    if filename in ocr_in_progress:
+        raise HTTPException(status_code=409, detail="OCR 尚未完成，请稍后提取参考文献")
+    if filename in reference_in_progress:
+        raise HTTPException(status_code=409, detail="参考文献正在提取，请稍候")
+    try:
+        source = read_reference_source(path)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    reference_in_progress.add(filename)
+    try:
+        references = await extract_references(source)
+        return {"references": references, "count": len(references),
+                "warnings": source["warnings"], "total_pages": source["total_pages"]}
+    except ValueError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    finally:
+        reference_in_progress.discard(filename)
+
+
+@app.put("/api/papers/{filename}")
+async def update_paper_metadata(filename: str, metadata: PaperMetadata) -> dict:
+    path = get_paper_path(filename)
+    existing = read_paper_metadata(path)
     data = metadata.model_dump()
-    data["starred"] = read_paper_metadata(path)["starred"]
+    if metadata.references is None:
+        data["references"] = existing["references"]
+    data["starred"] = existing["starred"]
     path.with_suffix(".json").write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     return data
 
@@ -219,6 +279,10 @@ async def update_paper_star(filename: str, star: PaperStar) -> dict[str, bool]:
 @app.delete("/api/papers/{filename}", status_code=204)
 async def delete_paper(filename: str) -> None:
     path = get_paper_path(filename)
+    if filename in metadata_in_progress:
+        raise HTTPException(status_code=409, detail="正在提取标题和摘要，请完成后再删除")
+    if filename in reference_in_progress:
+        raise HTTPException(status_code=409, detail="正在提取参考文献，请完成后再删除")
     if filename in ocr_in_progress:
         raise HTTPException(status_code=409, detail="这篇论文正在 OCR，请等待识别完成后再删除")
     if filename in translation_in_progress:

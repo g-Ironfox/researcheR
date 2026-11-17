@@ -17,11 +17,26 @@ const paperPreview = document.querySelector("#paper-preview");
 const dialogMessage = document.querySelector("#dialog-message");
 const deleteButton = document.querySelector("#delete-paper");
 const saveButton = document.querySelector("#save-paper");
+const extractMetadataButton = document.querySelector("#extract-metadata");
+const metadataStatus = document.querySelector("#metadata-status");
+const extractReferenceButton = document.querySelector("#extract-reference");
+const referencesList = document.querySelector("#references-list");
+const referencesCount = document.querySelector("#references-count");
+const referencesSearch = document.querySelector("#references-search");
+const referencesStatus = document.querySelector("#references-status");
+const addReferenceButton = document.querySelector("#add-reference");
+const legacyReference = document.querySelector("#legacy-reference");
 const paperPagination = document.querySelector("#paper-pagination");
 const previousPage = document.querySelector("#previous-page");
 const nextPage = document.querySelector("#next-page");
 const pageStatus = document.querySelector("#page-status");
 let selectedFilename = "";
+let paperEditorVersion = 0;
+let referenceEntries = [];
+let referencesRevision = 0;
+let metadataRevisions = { title: 0, abstract: 0 };
+paperTitle.addEventListener("input", () => { metadataRevisions.title++; });
+paperAbstract.addEventListener("input", () => { metadataRevisions.abstract++; });
 let papers = { items: [], total: 0, page: 1, page_count: 1 };
 let currentPage = 1;
 let pageCount = 1;
@@ -179,8 +194,115 @@ async function retryOcr(paper) {
   }
 }
 
+
+const referenceFields = [
+  ["number", "原文编号"], ["title", "标题"], ["authors", "作者（每行一位）"],
+  ["year", "年份"], ["venue", "期刊 / 会议"], ["volume", "卷"], ["issue", "期"],
+  ["pages", "页码"], ["publisher", "出版社"], ["doi", "DOI"], ["url", "链接"],
+  ["raw", "原始引用文本（必填）"],
+];
+
+function newReferenceEntry() {
+  return Object.fromEntries([
+    ...referenceFields.map(([field]) => [field, field === "authors" ? [] : ""]),
+    ["source_pages", []],
+  ]);
+}
+
+function updateReferenceSummary(entry, index, title, metadata) {
+  title.textContent = (entry.number ? "[" + entry.number + "] " : (index + 1) + ". ") +
+    (entry.title || entry.raw || "待填写的文献");
+  const authors = (entry.authors || []).join(", ");
+  const pages = entry.source_pages?.length ? "原文第 " + entry.source_pages.join("、") + " 页" : "";
+  metadata.textContent = [authors, entry.year, entry.venue, pages].filter(Boolean).join(" · ");
+}
+
+function renderReferences() {
+  referencesCount.textContent = referenceEntries.length + " 条";
+  referencesList.replaceChildren();
+  const query = referencesSearch.value.trim().toLocaleLowerCase();
+  let visible = 0;
+  referenceEntries.forEach((entry, index) => {
+    if (query && !JSON.stringify(entry).toLocaleLowerCase().includes(query)) return;
+    visible++;
+    const card = document.createElement("details");
+    card.className = "reference-card";
+    const summary = document.createElement("summary");
+    const title = document.createElement("strong");
+    const metadata = document.createElement("small");
+    updateReferenceSummary(entry, index, title, metadata);
+    summary.append(title, metadata);
+    const fields = document.createElement("div");
+    fields.className = "reference-entry-fields";
+    referenceFields.forEach(([field, labelText]) => {
+      const label = document.createElement("label");
+      label.textContent = labelText;
+      if (["title", "authors", "raw", "url"].includes(field)) label.className = "reference-wide";
+      const input = document.createElement(["authors", "raw"].includes(field) ? "textarea" : "input");
+      if (input.tagName === "TEXTAREA") input.rows = field === "raw" ? 4 : 2;
+      else input.type = "text";
+      input.dataset.referenceIndex = String(index);
+      input.dataset.referenceField = field;
+      input.value = field === "authors" ? (entry.authors || []).join("\n") : entry[field] || "";
+      input.addEventListener("input", () => {
+        entry[field] = field === "authors" ? input.value.split(/\r?\n/).map(s => s.trim()).filter(Boolean) : input.value;
+        referencesRevision++;
+        updateReferenceSummary(entry, index, title, metadata);
+      });
+      label.append(input);
+      fields.append(label);
+    });
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "remove-reference";
+    remove.textContent = "删除此条";
+    remove.addEventListener("click", () => {
+      referenceEntries.splice(index, 1);
+      referencesRevision++;
+      renderReferences();
+    });
+    fields.append(remove);
+    card.append(summary, fields);
+    referencesList.append(card);
+  });
+  if (!visible) {
+    const empty = document.createElement("p");
+    empty.className = "references-empty";
+    empty.textContent = query ? "没有匹配的参考文献。" : "尚未整理参考文献。点击“提取全部参考文献”开始，也可手动添加。";
+    referencesList.append(empty);
+  }
+}
+
+referencesSearch.addEventListener("input", renderReferences);
+addReferenceButton.addEventListener("click", () => {
+  referenceEntries.push(newReferenceEntry());
+  referencesRevision++;
+  referencesSearch.value = "";
+  renderReferences();
+  const card = referencesList.lastElementChild;
+  card.open = true;
+  card.querySelector('[data-reference-field="title"]').focus();
+});
+
 async function openPaper(filename) {
+  const version = ++paperEditorVersion;
   selectedFilename = filename;
+  saveButton.disabled = true;
+  deleteButton.disabled = true;
+  extractReferenceButton.disabled = true;
+  extractMetadataButton.disabled = true;
+  extractReferenceButton.textContent = "提取全部参考文献";
+  addReferenceButton.disabled = true;
+  referenceEntries = [];
+  referencesRevision++;
+  referencesSearch.value = "";
+  referencesStatus.textContent = "";
+  metadataStatus.textContent = "";
+  extractMetadataButton.textContent = "提取标题和摘要";
+  referencesList.setAttribute("aria-busy", "false");
+  legacyReference.hidden = true;
+  legacyReference.open = false;
+  renderReferences();
   paperForm.reset();
   dialogMessage.textContent = "正在加载...";
   paperPreview.hidden = true;
@@ -192,14 +314,26 @@ async function openPaper(filename) {
     const response = await fetch(`/api/papers/${encodeURIComponent(filename)}`);
     if (!response.ok) throw new Error("无法加载论文信息");
     const metadata = await response.json();
-    if (selectedFilename !== filename || !paperDialog.open) return;
+    if (version !== paperEditorVersion || !paperDialog.open) return;
     paperTitle.value = metadata.title;
     paperVenue.value = metadata.venue;
     paperAbstract.value = metadata.abstract;
-    paperReference.value = metadata.reference;
+    paperReference.value = metadata.reference || "";
+    legacyReference.hidden = !paperReference.value;
+    referenceEntries = (Array.isArray(metadata.references) ? metadata.references : []).map(entry => ({
+      ...newReferenceEntry(), ...entry,
+      authors: Array.isArray(entry.authors) ? entry.authors : [],
+      source_pages: Array.isArray(entry.source_pages) ? entry.source_pages : [],
+    }));
+    renderReferences();
+    addReferenceButton.disabled = false;
+    saveButton.disabled = false;
+    deleteButton.disabled = false;
+    extractReferenceButton.disabled = false;
+    extractMetadataButton.disabled = false;
     dialogMessage.textContent = "";
   } catch (error) {
-    if (selectedFilename === filename && paperDialog.open) dialogMessage.textContent = error.message;
+    if (version === paperEditorVersion && paperDialog.open) dialogMessage.textContent = error.message;
   }
 }
 
@@ -295,12 +429,112 @@ form.addEventListener("submit", async (event) => {
   }
 });
 
+extractMetadataButton.addEventListener("click", async () => {
+  if (extractMetadataButton.disabled) return;
+  const filename = selectedFilename;
+  const version = paperEditorVersion;
+  const revisions = { ...metadataRevisions };
+  const previous = { title: paperTitle.value, abstract: paperAbstract.value };
+  extractMetadataButton.disabled = true;
+  extractReferenceButton.disabled = true;
+  saveButton.disabled = true;
+  deleteButton.disabled = true;
+  extractMetadataButton.textContent = "正在提取…";
+  metadataStatus.textContent = "正在提取原标题和完整摘要，不会改写或总结原文…";
+  try {
+    const response = await fetch(
+      "/api/papers/" + encodeURIComponent(filename) + "/metadata/extract", { method: "POST" },
+    );
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.detail || "标题和摘要提取失败");
+    if (version !== paperEditorVersion || !paperDialog.open) return;
+    if (typeof result.title !== "string" || typeof result.abstract !== "string") {
+      throw new Error("标题和摘要返回格式无效，原有内容已保留。");
+    }
+    const messages = [];
+    for (const [field, label, input] of [["title", "标题", paperTitle], ["abstract", "摘要", paperAbstract]]) {
+      if (metadataRevisions[field] !== revisions[field] || input.value !== previous[field]) {
+        messages.push(label + "在提取期间已编辑，保留你的输入");
+      } else if (!result[field].trim()) {
+        messages.push("未找到可确认的完整" + label + "，保留原内容");
+      } else {
+        input.value = result[field];
+        messages.push(label + "已填入");
+      }
+    }
+    const warnings = Array.isArray(result.warnings) ? result.warnings.join("；") : "";
+    metadataStatus.textContent = messages.join("；") + "。请检查后点击保存。" + (warnings ? " 提醒：" + warnings : "");
+  } catch (error) {
+    if (version === paperEditorVersion && paperDialog.open) metadataStatus.textContent = error.message;
+  } finally {
+    if (version === paperEditorVersion && paperDialog.open) {
+      extractMetadataButton.disabled = false;
+      extractReferenceButton.disabled = false;
+      saveButton.disabled = false;
+      deleteButton.disabled = false;
+      extractMetadataButton.textContent = "提取标题和摘要";
+    }
+  }
+});
+
+extractReferenceButton.addEventListener("click", async () => {
+  if (extractReferenceButton.disabled) return;
+  if (referenceEntries.length && !window.confirm("重新提取会替换当前文献列表（保存后生效），继续吗？")) return;
+  const filename = selectedFilename;
+  const version = paperEditorVersion;
+  const revision = referencesRevision;
+  extractReferenceButton.disabled = true;
+  extractMetadataButton.disabled = true;
+  extractReferenceButton.textContent = "正在提取…";
+  saveButton.disabled = true;
+  deleteButton.disabled = true;
+  referencesStatus.textContent = "正在扫描全文并逐条提取参考文献，长论文可能需要几分钟…";
+  referencesList.setAttribute("aria-busy", "true");
+  try {
+    const response = await fetch(
+      "/api/papers/" + encodeURIComponent(filename) + "/references", { method: "POST" },
+    );
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.detail || "参考文献提取失败");
+    if (version !== paperEditorVersion || !paperDialog.open) return;
+    if (referencesRevision !== revision) {
+      referencesStatus.textContent = "提取期间文献列表已被编辑，保留了你的修改；可再次提取。";
+      return;
+    }
+    if (!Array.isArray(result.references)) throw new Error("参考文献返回格式无效，原列表已保留。");
+    const warnings = Array.isArray(result.warnings) ? result.warnings.join("；") : "";
+    if (!result.references.length) {
+      referencesStatus.textContent = "未识别到参考文献，原列表已保留，请核对原文和 OCR。" + (warnings ? " 提醒：" + warnings : "");
+      return;
+    }
+    referenceEntries = result.references;
+    referencesRevision++;
+    referencesSearch.value = "";
+    renderReferences();
+    referencesStatus.textContent = "已扫描 " + result.total_pages + " 页，提取 " + referenceEntries.length +
+      " 条参考文献。请展开核对，点击保存后生效。" + (warnings ? " 提醒：" + warnings : "");
+  } catch (error) {
+    if (version === paperEditorVersion && paperDialog.open) referencesStatus.textContent = error.message;
+  } finally {
+    if (version === paperEditorVersion && paperDialog.open) {
+      extractReferenceButton.disabled = false;
+      extractMetadataButton.disabled = false;
+      extractReferenceButton.textContent = "提取全部参考文献";
+      saveButton.disabled = false;
+      deleteButton.disabled = false;
+      referencesList.setAttribute("aria-busy", "false");
+    }
+  }
+});
+
 document.querySelector("#close-dialog").addEventListener("click", () => paperDialog.close());
 
 deleteButton.addEventListener("click", async () => {
   if (!window.confirm(`确定删除《${paperTitle.value}》吗？此操作无法撤销。`)) return;
   deleteButton.disabled = true;
   saveButton.disabled = true;
+  extractReferenceButton.disabled = true;
+  extractMetadataButton.disabled = true;
   dialogMessage.textContent = "正在删除...";
   try {
     const response = await fetch(`/api/papers/${encodeURIComponent(selectedFilename)}`, { method: "DELETE" });
@@ -315,12 +549,26 @@ deleteButton.addEventListener("click", async () => {
   } finally {
     deleteButton.disabled = false;
     saveButton.disabled = false;
+    extractReferenceButton.disabled = false;
+    extractMetadataButton.disabled = false;
   }
 });
 
 paperForm.addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (saveButton.disabled) return;
+  if (referenceEntries.some(entry => !entry.raw.trim())) {
+    dialogMessage.textContent = "有文献缺少原始引用文本，请展开补充或删除空条目后再保存。";
+    referencesSearch.value = "";
+    renderReferences();
+    referencesList.querySelectorAll(".reference-card").forEach((card, index) => {
+      if (!referenceEntries[index].raw.trim()) card.open = true;
+    });
+    return;
+  }
   saveButton.disabled = true;
+  extractReferenceButton.disabled = true;
+  extractMetadataButton.disabled = true;
   deleteButton.disabled = true;
   dialogMessage.textContent = "正在保存...";
   try {
@@ -332,6 +580,7 @@ paperForm.addEventListener("submit", async (event) => {
         venue: paperVenue.value,
         abstract: paperAbstract.value,
         reference: paperReference.value,
+        references: referenceEntries,
       }),
     });
     if (!response.ok) throw new Error("保存失败");
@@ -342,6 +591,8 @@ paperForm.addEventListener("submit", async (event) => {
   } finally {
     saveButton.disabled = false;
     deleteButton.disabled = false;
+    extractReferenceButton.disabled = false;
+    extractMetadataButton.disabled = false;
   }
 });
 

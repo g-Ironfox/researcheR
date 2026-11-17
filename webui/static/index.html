@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>researcheR</title>
-  <link rel="stylesheet" href="/static/styles.css?v=26">
-  <script src="/static/app.js?v=21" defer></script>
+  <link rel="stylesheet" href="/static/styles.css?v=29">
+  <script src="/static/app.js?v=24" defer></script>
 </head>
 <body>
   <header>
@@ -60,12 +60,36 @@
       <div class="paper-editor">
         <img id="paper-preview" alt="PDF 第一页预览">
         <div class="paper-fields">
+          <div class="metadata-heading">
+            <h3>论文信息</h3>
+            <button type="button" id="extract-metadata">提取标题和摘要</button>
+          </div>
+          <p id="metadata-status" role="status" aria-live="polite"></p>
           <label>标题<input id="paper-title" name="title" required></label>
           <label>发表会议/期刊<input id="paper-venue" name="venue"></label>
-          <label>Abstract<textarea id="paper-abstract" name="abstract" rows="7"></textarea></label>
-          <label>Reference<textarea id="paper-reference" name="reference" rows="7"></textarea></label>
+          <label>摘要（Abstract）<textarea id="paper-abstract" name="abstract" rows="7"></textarea></label>
+          <small class="metadata-help">从论文前三页提取原标题和完整摘要，不翻译、不总结；使用 DeepSeek API，检查后点击保存。</small>
         </div>
       </div>
+      <section class="references-section" aria-labelledby="references-title">
+        <div class="references-toolbar">
+          <div><h3 id="references-title">参考文献 <span id="references-count">0 条</span></h3>
+            <p class="references-help">提取论文中引用的全部文献，按原文顺序逐条整理；不会生成本篇论文自身的引用。</p></div>
+          <button type="button" id="extract-reference">提取全部参考文献</button>
+        </div>
+        <div class="references-controls">
+          <input type="search" id="references-search" placeholder="搜索标题、作者、年份或 DOI" aria-label="搜索参考文献">
+          <button type="button" id="add-reference">手动添加</button>
+        </div>
+        <p id="references-status" role="status" aria-live="polite"></p>
+        <div id="references-list" class="references-list"></div>
+        <details id="legacy-reference" hidden>
+          <summary>旧版 Reference 文本（保留，未自动转换）</summary>
+          <label for="paper-reference">原始内容</label>
+          <textarea id="paper-reference" name="reference" rows="5"></textarea>
+        </details>
+        <p class="references-help">使用现有 DeepSeek 配置扫描全文，可能产生多次 API 用量。提取后请核对原文，点击“保存”才写入论文信息。</p>
+      </section>
       <div class="dialog-actions">
         <button type="button" id="delete-paper">删除</button>
         <span id="dialog-message" role="status"></span>
