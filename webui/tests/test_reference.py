@@ -106,6 +106,23 @@ class ReferenceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.json()["reference"], "@misc{old}")
         self.assertEqual(response.json()["references"], [])
 
+    async def test_library_reports_batch_skip_and_in_progress_flags(self):
+        self.metadata["references"] = [entry()]
+        self.pdf.with_suffix(".json").write_text(json.dumps(self.metadata), encoding="utf-8")
+        self.pdf.with_suffix(".md").write_text("# Existing markdown", encoding="utf-8")
+        papers_app.reference_in_progress.add("paper.pdf")
+        papers_app.markdown_in_progress.add("paper.pdf")
+        try:
+            response = await self.client.get("/api/papers")
+        finally:
+            papers_app.reference_in_progress.discard("paper.pdf")
+            papers_app.markdown_in_progress.discard("paper.pdf")
+        paper = response.json()["papers"][0]
+        self.assertEqual(paper["references_count"], 1)
+        self.assertTrue(paper["references_processing"])
+        self.assertTrue(paper["markdown_available"])
+        self.assertTrue(paper["markdown_processing"])
+
     def test_all_ocr_pages_used_untruncated_and_pdf_fills_missing_pages(self):
         long_text = "References\n" + ("Long reference text.\n" * 1000)
         self.pdf.with_suffix(".ocr.json").write_text(json.dumps({

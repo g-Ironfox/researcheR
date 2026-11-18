@@ -5,8 +5,10 @@ services:
     ports:
       - "8667:8000"
     depends_on:
-      - redis
-      - mongodb
+      redis:
+        condition: service_healthy
+      mongodb:
+        condition: service_started
     environment:
       - MONGO_HOST=${MONGO_HOST}
       - MONGO_PORT=${MONGO_PORT}
@@ -18,6 +20,27 @@ services:
       - TZ=${TZ}
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
       - DEEPSEEK_CHAT_MODEL=${DEEPSEEK_CHAT_MODEL:-deepseek-flash}
+      - REDIS_URL=redis://${REDIS_HOST:-redis}:${REDIS_PORT:-6379}/0
+      - TASK_WORKERS=${TASK_WORKERS:-3}
+    volumes:
+      - ./data/uploads:/app/uploads
+    networks:
+      - researcheR_net
+
+  worker:
+    build: ./webui
+    container_name: worker_researcheR
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      - REDIS_URL=redis://${REDIS_HOST:-redis}:${REDIS_PORT:-6379}/0
+      - TASK_WORKERS=${TASK_WORKERS:-3}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - DEEPSEEK_CHAT_MODEL=${DEEPSEEK_CHAT_MODEL:-deepseek-flash}
+      - TZ=${TZ}
+    command: ["python", "worker.py"]
     volumes:
       - ./data/uploads:/app/uploads
     networks:
@@ -31,6 +54,11 @@ services:
     volumes:
       - ./data/redis:/data        # Redis 持久化
     command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
     networks:
       - researcheR_net
 

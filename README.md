@@ -30,14 +30,14 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml down
 在项目根目录的 `.env` 中设置 `DEEPSEEK_API_KEY=你的密钥`，然后重建并启动 Web UI（依赖只安装在 Docker 镜像内）：
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build webui
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build webui worker
 ```
 
-上传新 PDF 后，服务端会同步调用 DeepSeek OCR（`rich_layout_recognition`），等待所有页面识别完成再返回。批量上传会依次处理，期间页面显示等待提示。PDF 会发送至 DeepSeek；已有重复文件仍跳过，不重复调用 OCR。
+上传新 PDF 后，WebUI 会保存文件并立即返回，OCR 任务交给独立 worker 容器通过 Redis 队列在后台处理。可在首页“后台任务”面板查看运行状态；上传期间关闭浏览器不会中止任务。PDF 会发送至 DeepSeek；已有重复文件仍跳过，不重复调用 OCR。
 
 每篇论文的结果保存到 `data/uploads/<论文ID>.ocr.json`，在论文列表点击 **JSON** 下载。JSON 包含 `source`（文件信息）、`status`、`error`，以及 `result` 中的 DeepSeek 原始响应；每页文本位于 `result.pages[].text`，保留版面标记，页码 `index` 从 0 开始。页数不符或页面 `finish_reason=length` 时标记为 `partial`。
 
-未配置密钥、超时或接口报错时，仍保留 PDF 并生成说明原因的 JSON，不会伪装成识别成功；删除论文会同时删除 OCR JSON。原有论文不自动补做 OCR。未 OCR 的论文可点击列表中的 **开始 OCR**；识别失败、未配置密钥或结果不完整的论文可点击 **重新 OCR**。识别期间按钮禁用，完成后自动更新状态和 JSON 下载链接；重试使用原 PDF，并覆盖该论文之前的 OCR JSON。单文件超过 100 MiB 或 1000 页时不调用接口。
+未配置密钥、超时或接口报错时，仍保留 PDF 并生成说明原因的 JSON，不会伪装成识别成功；删除论文会同时删除 OCR JSON。原有论文不自动补做 OCR。未 OCR 的论文可点击列表中的 **开始 OCR**；识别失败、未配置密钥或结果不完整的论文可点击 **重新 OCR**。任务面板支持重试失败任务；重试使用原 PDF，并覆盖该论文之前的 OCR JSON。单文件超过 100 MiB 或 1000 页时不调用接口。
 
 在容器内运行集成测试（使用模拟 OCR 响应，不调用付费接口）：
 
@@ -69,3 +69,11 @@ node webui/tests/test_reference_ui.mjs
 在论文编辑窗口的“论文信息”区点击 **提取标题和摘要**，使用现有 DeepSeek 配置，从前三页文本提取论文自身的原标题及完整摘要。优先读取已有 OCR，缺失时使用 PDF 原生文本；扫描版没有可读文本时需要先 OCR。保留原文语言，不翻译、不另写总结；未知或不完整的字段留空，界面保留该字段原有内容。提取结果会与输入原文核对，返回格式异常、截断或无法核对时不会修改已有内容。
 
 结果先填入表单，检查后点击 **保存** 生效；提取期间手动修改过的字段不会被覆盖。此操作会将前三页可读文本发送至 DeepSeek 并产生 API 用量，不会触发额外 OCR，也不会修改已有参考文献列表。
+
+## 批量处理
+
+`.env` 中可设置 `TASK_WORKERS=3` 控制独立 worker 容器内部的并发数（1 到 32）。当前部署使用一个 worker 容器、内部 N 个并发执行单元，不支持通过多个 worker 容器副本扩容；修改并发数后需重建容器，开发模式修改 worker Python 代码后需重启 worker。API 与 worker 共用 Redis 队列和上传目录；启动或更新时使用 `docker compose up -d --build`。
+
+在论文列表勾选多篇论文，可跨分页保留选择；**全选本页**只选择当前筛选结果的当前页。选择后可依次执行 **OCR**、**提取参考文献** 或 **转 Markdown**。批量任务会立即写入 Redis 后台队列，并显示每篇的排队状态；独立 worker 容器按 `TASK_WORKERS` 并发处理。首页“后台任务”区域显示当前运行数、排队数、worker 名称、耗时和失败原因，支持取消排队任务及重试失败任务。关闭浏览器不会中断任务。
+
+批量 OCR 跳过已有成功 OCR 的论文（包括完整或部分结果）；失败或未配置结果可以重试。参考文献提取跳过已有结构化条目的论文，成功后自动保存且保留其他论文信息。Markdown 跳过已有 Markdown 或没有可用 OCR 的论文。上传论文也会自动加入 OCR 队列。服务重启时正在执行的任务标为中断，不自动重试；可从任务面板手动重试。OCR 和模型请求可能产生 API 用量。

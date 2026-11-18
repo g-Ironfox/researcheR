@@ -40,7 +40,7 @@ async function readMarkdownResponse(response, fallback) {
   if (!response.ok) {
     throw new Error(typeof result?.detail === "string" ? result.detail : `${fallback}（HTTP ${response.status}）`);
   }
-  if (!result || typeof result !== "object" || !["ready", "generating", "not_generated"].includes(result.status)) {
+  if (!result || typeof result !== "object" || !["ready", "generating", "not_generated", "failed"].includes(result.status)) {
     throw new Error(`${fallback}：服务返回格式无效，请稍后重试。`);
   }
   return result;
@@ -67,8 +67,9 @@ function showDocument(document) {
   regenerateButton.hidden = document.status === "generating";
   regenerateButton.textContent = document.status === "ready" ? (language === "zh" ? "重新翻译" : "重新生成") : (language === "zh" ? "重试翻译" : "重试生成");
   retryAction = "generate";
-  status.classList.remove("is-error");
-  status.textContent = document.status === "generating" ? (language === "zh" ? "中文正在翻译…" : "Markdown 正在生成…") : "";
+  status.classList.toggle("is-error", document.status === "failed");
+  status.textContent = document.status === "generating" ? (language === "zh" ? "中文正在翻译…" : "Markdown 正在生成…") : document.status === "failed" ? (document.error || "后台任务失败，请重试。") : "";
+  if (document.status === "failed") { regenerateButton.hidden = false; regenerateButton.textContent = language === "zh" ? "重试翻译" : "重试生成"; }
 }
 
 async function loadDocument() {
@@ -105,9 +106,15 @@ async function generateDocument(force, sequence = loadSequence, currentLanguage 
   status.classList.remove("is-error");
   status.textContent = currentLanguage === "zh" ? "正在翻译论文，较长文档需要一些时间…" : "正在将完整 OCR 结果交给模型整理，论文较长时需要一些时间…";
   try {
-    const response = await fetch(`${languageApi(currentLanguage)}${force ? "&force=true" : ""}`, { method: "POST" });
+    const parameters = new URLSearchParams({ language: currentLanguage, background: "true" });
+    if (force) parameters.set("force", "true");
+    const backgroundUrl = `${api}?${parameters}`;
+    const response = await fetch(backgroundUrl, { method: "POST" });
     const document = await readMarkdownResponse(response, currentLanguage === "zh" ? "中文翻译失败" : "Markdown 生成失败");
-    if (sequence === loadSequence) showDocument(document);
+    if (sequence === loadSequence) {
+      showDocument(document);
+      if (document.status === "generating") window.setTimeout(() => { if (sequence === loadSequence) loadDocument(); }, 2000);
+    }
   } catch (error) {
     if (sequence === loadSequence) {
       status.classList.add("is-error");

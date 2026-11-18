@@ -22,7 +22,9 @@ export async function runReferenceUiTests() {
       querySelectorAll(selector) {
         const matches = [];
         for (const child of this.children) {
-          if (selector === '.reference-card' && child.className === 'reference-card') matches.push(child);
+          if (selector.startsWith('.') && child.className === selector.slice(1)) matches.push(child);
+          const status = selector.match(/^\[data-status="(.+)"\]$/)?.[1];
+          if (status && child.dataset?.status === status) matches.push(child);
           const field = selector.match(/^\[data-reference-field="(.+)"\]$/)?.[1];
           if (field && child.dataset?.referenceField === field) matches.push(child);
           matches.push(...child.querySelectorAll(selector));
@@ -35,8 +37,21 @@ export async function runReferenceUiTests() {
     if (!elements.has(selector)) elements.set(selector, element());
     return elements.get(selector);
   };
+  const batchButtons = ["ocr", "references", "markdown"].map(action => {
+    const button = element("button");
+    button.dataset.action = action;
+    button.dataset.bulkAction = action;
+    return button;
+  });
+  let listing = [];
+  let batchResponses = {};
+  let queueListing = {tasks: [], counts: {queued: 0, running: 0, completed: 0, failed: 0}};
+  let batchMode = false;
   const calls = [];
   let pending, pendingMetadata, failure, confirmation = true;
+  const taskResolvers = new Map();
+  const taskValues = new Map();
+  let taskSequence = 0;
   const citation = (title = 'First reference', number = '1') => ({
     number, title, authors: ['Alice Smith'], year: '2024', venue: 'Journal', raw: 'Raw ' + title,
     source_pages: [8],
@@ -44,11 +59,33 @@ export async function runReferenceUiTests() {
   const reply = data => ({ok: true, json: async () => data});
   const extracted = (references, warnings = []) => reply({references, count: references.length, total_pages: 10, warnings});
   const context = vm.createContext({
-    document: { querySelector: query, createElement: element },
+    document: {
+      querySelector: query,
+      querySelectorAll: selector => selector === "[data-bulk-action]" ? batchButtons : [],
+      createElement: element,
+    },
     window: { confirm: () => confirmation }, URLSearchParams, setTimeout, clearTimeout,
     fetch: async (url, options) => {
       calls.push([url, options]);
-      if (url.startsWith('/api/papers?')) return reply({papers: [], total: 0, page: 1, page_count: 1});
+      if (url === '/api/tasks?limit=100') return reply(queueListing);
+      if (url === '/api/tasks' && options?.method === 'POST') {
+        const request = JSON.parse(options.body);
+        const id = 'task-' + request.action + '-' + (++taskSequence);
+        const finishTask = response => response.json().then(payload => { const data = {id, status: response.ok ? 'completed' : 'failed', result: payload, error: payload.detail || ''}; taskValues.set(id, data); taskResolvers.get(id)?.(data); });
+        if (!batchMode && request.action === 'references') pending = finishTask;
+        if (!batchMode && request.action === 'metadata') pendingMetadata = finishTask;
+        return reply({id, status: 'queued'});
+      }
+      if (url.startsWith('/api/tasks/task-')) {
+        if (!batchMode) { const id = url.slice('/api/tasks/'.length); return new Promise(resolve => { taskResolvers.set(id, data => resolve(reply(data))); if (taskValues.has(id)) taskResolvers.get(id)(taskValues.get(id)); }); }
+        return reply({id: url.slice('/api/tasks/'.length), status: 'completed', result: batchResponses.task || {}});
+      }
+      if (url.startsWith('/api/papers?')) return reply({papers: listing, total: listing.length, page: 1, page_count: 1});
+      if (batchMode && url.endsWith('/ocr')) return reply(batchResponses.ocr);
+      if (batchMode && url.endsWith('/references')) return reply(batchResponses.references);
+      if (batchMode && url.endsWith('/markdown')) return reply(batchResponses.markdown);
+      if (batchMode && (!options || options.method === 'GET')) return reply(batchResponses.metadata);
+      if (batchMode && options?.method === 'PUT') return reply(JSON.parse(options.body));
       if (url.endsWith('/metadata/extract')) return new Promise(resolve => { pendingMetadata = resolve; });
       if (url.endsWith('/references')) return new Promise(resolve => { pending = resolve; });
       if (options?.method === 'PUT') return reply(JSON.parse(options.body));
@@ -67,6 +104,101 @@ export async function runReferenceUiTests() {
   const submit = query('#paper-form').listeners.submit;
   const entries = () => vm.runInContext('referenceEntries', context);
   let checks = 0;
+
+  listing = [{filename: "batch.pdf", name: "Batch paper", venue: "", size_kb: 1,
+    starred: false, ocr_status: "not_started", ocr_downloadable: false,
+    markdown_available: false, references_count: 0, references_processing: false}];
+  batchMode = true;
+  await context.loadPapers(1);
+  const selectPage = query('#select-page-papers');
+  selectPage.checked = true;
+  selectPage.listeners.change();
+  assert.equal(query('#bulk-selected-count').textContent, '已选 1 篇');
+  assert.equal(batchButtons[0].disabled, false);
+  const rowCheckbox = query('#paper-list').children[0].children[0].children[0];
+  assert.equal(rowCheckbox.checked, true);
+  batchResponses.ocr = {ocr_status: 'completed', ocr_downloadable: true, ocr_error: ''};
+  let beforeBatch = calls.length;
+  await batchButtons[0].listeners.click();
+  assert.ok(calls.slice(beforeBatch).some(([url, options]) => url === '/api/tasks' && JSON.parse(options.body).action === 'ocr'));
+  assert.ok(query('#bulk-results').children[0].children[1].textContent.includes('已排队'));
+  assert.equal(query('#bulk-selected-count').textContent, '已选 0 篇');
+  checks++;
+
+  listing = [{filename: "partial-ocr.pdf", name: "Partial OCR", venue: "", size_kb: 1,
+    starred: false, ocr_status: "partial", ocr_downloadable: true,
+    markdown_available: false, references_count: 0, references_processing: false}];
+  await context.loadPapers(1);
+  selectPage.checked = true;
+  selectPage.listeners.change();
+  beforeBatch = calls.length;
+  await batchButtons[0].listeners.click();
+  assert.ok(!calls.slice(beforeBatch).some(([url]) => url.endsWith('/partial-ocr.pdf/ocr')));
+  assert.ok(query('#bulk-results').children[0].children[1].textContent.includes('已有 OCR'));
+  checks++;
+
+  listing = [{filename: "existing.pdf", name: "Existing references", venue: "", size_kb: 1,
+    starred: false, ocr_status: "completed", ocr_downloadable: true,
+    markdown_available: true, references_count: 4, references_processing: false}];
+  batchResponses.metadata = {references: [citation("Already saved")], title: "Existing", venue: "", abstract: "", reference: "", starred: false};
+  await context.loadPapers(1);
+  selectPage.checked = true;
+  selectPage.listeners.change();
+  beforeBatch = calls.length;
+  await batchButtons[1].listeners.click();
+  assert.ok(!calls.slice(beforeBatch).some(([url]) => url === '/api/tasks' && JSON.parse(url[1]?.body || '{}').action === 'references'));
+  assert.ok(query('#bulk-results').children[0].children[1].textContent.includes('已有 4 条参考文献'));
+  checks++;
+
+  beforeBatch = calls.length;
+  selectPage.checked = true;
+  selectPage.listeners.change();
+  await batchButtons[2].listeners.click();
+  assert.ok(!calls.slice(beforeBatch).some(([url]) => url === '/api/tasks'));
+  assert.ok(query('#bulk-results').children[0].children[1].textContent.includes('已有 Markdown'));
+  checks++;
+
+  listing = [{filename: "new-refs.pdf", name: "New references", venue: "", size_kb: 1,
+    starred: false, ocr_status: "completed", ocr_downloadable: true,
+    markdown_available: false, references_count: 0, references_processing: false}];
+  batchResponses.references = {references: [{title: "Ref", raw: "Ref", authors: [], source_pages: []}],
+    warnings: [], count: 1, total_pages: 1};
+  await context.loadPapers(1);
+  selectPage.checked = true;
+  selectPage.listeners.change();
+  beforeBatch = calls.length;
+  await batchButtons[1].listeners.click();
+  const refsTask = calls.slice(beforeBatch).find(([url, options]) => url === '/api/tasks' && options?.method === 'POST');
+  assert.equal(JSON.parse(refsTask[1].body).save_result, true);
+  assert.ok(query('#bulk-results').children[0].children[1].textContent.includes('已排队'));
+  checks++;
+
+  listing = [{filename: "new-md.pdf", name: "New markdown", venue: "", size_kb: 1,
+    starred: false, ocr_status: "partial", ocr_downloadable: true,
+    markdown_available: false, references_count: 0, references_processing: false}];
+  await context.loadPapers(1);
+  selectPage.checked = true;
+  selectPage.listeners.change();
+  beforeBatch = calls.length;
+  await batchButtons[2].listeners.click();
+  assert.ok(calls.slice(beforeBatch).some(([url, options]) => url === '/api/tasks' && JSON.parse(options.body).action === 'markdown'));
+  assert.ok(query('#bulk-results').children[0].children[1].textContent.includes('已排队'));
+  checks++;
+
+  listing = [{filename: "no-ocr.pdf", name: "No OCR", venue: "", size_kb: 1,
+    starred: false, ocr_status: "failed", ocr_downloadable: true,
+    markdown_available: false, references_count: 0, references_processing: false}];
+  await context.loadPapers(1);
+  selectPage.checked = true;
+  selectPage.listeners.change();
+  beforeBatch = calls.length;
+  await batchButtons[2].listeners.click();
+  assert.ok(!calls.slice(beforeBatch).some(([url]) => url === '/api/tasks'));
+  assert.ok(query('#bulk-results').children[0].children[1].textContent.includes('尚无可用 OCR'));
+  checks++;
+  batchMode = false;
+  listing = [];
+  calls.length = 0;
 
   await open('first.pdf');
   assert.equal(button.disabled, false);
@@ -271,6 +403,44 @@ export async function runReferenceUiTests() {
   const metadataSaved = JSON.parse(calls.findLast(([, opts]) => opts?.method === 'PUT')[1].body);
   assert.equal(metadataSaved.title, 'New metadata');
   assert.equal(metadataSaved.abstract, 'New full abstract');
+  checks++;
+
+  const resultTask = {id: 'task-result-metadata', filename: 'third.pdf', title: 'Third paper', action: 'metadata', status: 'completed', result: {title: 'Recovered title', abstract: 'Recovered abstract'}};
+  taskValues.set(resultTask.id, resultTask);
+  await context.showTaskResult(resultTask.id);
+  assert.equal(query('#task-result-dialog').open, true);
+  assert.ok(query('#task-result-content').textContent.includes('Recovered abstract'));
+  assert.equal(query('#apply-task-result').hidden, false);
+  await open('third.pdf');
+  confirmation = false;
+  await query('#apply-task-result').listeners.click();
+  assert.notEqual(title.value, 'Recovered title');
+  confirmation = true;
+  await query('#apply-task-result').listeners.click();
+  assert.equal(title.value, 'Recovered title');
+  assert.equal(abstract.value, 'Recovered abstract');
+  assert.equal(query('#task-result-dialog').open, false);
+  checks++;
+
+  const referenceTask = {...resultTask, id: 'task-result-references', action: 'references', result: {references: [citation('Recovered citation')]}};
+  taskValues.set(referenceTask.id, referenceTask);
+  await context.showTaskResult(referenceTask.id);
+  await query('#apply-task-result').listeners.click();
+  assert.equal(entries()[0].title, 'Recovered citation');
+  checks++;
+
+  queueListing = {workers: 3, counts: {running: 1, queued: 1, failed: 1}, tasks: [
+    {...resultTask, id: 'running', status: 'running', worker: 'worker-2'},
+    {...resultTask, id: 'queued', status: 'queued'},
+    {...resultTask, id: 'failed', status: 'failed', error: 'Provider unavailable'},
+  ]};
+  await context.refreshTasks();
+  const taskRows = query('#task-list').children;
+  assert.equal(taskRows.length, 3);
+  assert.ok(taskRows[0].children.some(child => child.textContent === 'worker-2'));
+  assert.ok(taskRows[1].children.some(child => child.textContent === '取消'));
+  assert.ok(taskRows[2].children.some(child => child.textContent === '重试'));
+  assert.ok(taskRows[2].children.some(child => child.textContent === 'Provider unavailable'));
   checks++;
 
   failure = true;

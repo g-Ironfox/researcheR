@@ -3,6 +3,20 @@ const fileInput = document.querySelector("#file-input");
 const message = document.querySelector("#message");
 const paperCount = document.querySelector("#paper-count");
 const paperList = document.querySelector("#paper-list");
+const bulkToolbar = document.querySelector("#bulk-toolbar");
+const selectPagePapers = document.querySelector("#select-page-papers");
+const bulkSelectedCount = document.querySelector("#bulk-selected-count");
+const bulkProgress = document.querySelector("#bulk-progress");
+const bulkProgressTitle = document.querySelector("#bulk-progress-title");
+const bulkResults = document.querySelector("#bulk-results");
+const clearBulkProgress = document.querySelector("#clear-bulk-progress");
+const taskList = document.querySelector("#task-list");
+const taskCounts = document.querySelector("#task-counts");
+const taskResultDialog = document.querySelector("#task-result-dialog");
+const taskResultStatus = document.querySelector("#task-result-status");
+const taskResultContent = document.querySelector("#task-result-content");
+const applyTaskResult = document.querySelector("#apply-task-result");
+let viewedTask = null;
 const starFilter = document.querySelector("#star-filter");
 const titleSearch = document.querySelector("#title-search");
 const pendingList = document.querySelector("#pending-list");
@@ -43,9 +57,32 @@ let pageCount = 1;
 let papersRequestId = 0;
 let ocrRefreshTimer;
 const pendingOcr = new Set();
+const selectedPapers = new Set();
+const paperCache = new Map();
+let bulkInProgress = false;
+
+function updateBulkControls() {
+  const visible = papers.items || [];
+  const selectedOnPage = visible.filter(paper => selectedPapers.has(paper.filename)).length;
+  selectPagePapers.checked = visible.length > 0 && selectedOnPage === visible.length;
+  selectPagePapers.indeterminate = selectedOnPage > 0 && selectedOnPage < visible.length;
+  selectPagePapers.disabled = bulkInProgress || visible.length === 0;
+  document.querySelectorAll("[data-bulk-action]").forEach(button => {
+    button.disabled = bulkInProgress || selectedPapers.size === 0;
+  });
+  bulkSelectedCount.textContent = "已选 " + selectedPapers.size + " 篇";
+  bulkToolbar.hidden = visible.length === 0;
+}
 
 function renderPapers() {
   paperList.replaceChildren();
+  bulkToolbar.hidden = papers.items.length === 0;
+  const selectedOnPage = papers.items.filter(paper => selectedPapers.has(paper.filename)).length;
+  selectPagePapers.checked = papers.items.length > 0 && selectedOnPage === papers.items.length;
+  selectPagePapers.indeterminate = selectedOnPage > 0 && selectedOnPage < papers.items.length;
+  selectPagePapers.disabled = bulkInProgress;
+  document.querySelectorAll("[data-bulk-action]").forEach(button => { button.disabled = bulkInProgress || selectedPapers.size === 0; });
+  bulkSelectedCount.textContent = "已选 " + selectedPapers.size + " 篇";
   paperCount.textContent = papers.total;
 
   if (papers.items.length === 0) {
@@ -75,6 +112,20 @@ function renderPapers() {
     openButton.className = "paper-button";
     openButton.textContent = paper.name;
     openButton.addEventListener("click", () => openPaper(paper.filename));
+    const selectLabel = document.createElement("label");
+    selectLabel.className = "paper-select-control";
+    const select = document.createElement("input");
+    select.type = "checkbox";
+    select.className = "paper-select";
+    select.checked = selectedPapers.has(paper.filename);
+    select.disabled = bulkInProgress;
+    select.setAttribute("aria-label", "选择《" + paper.name + "》");
+    select.addEventListener("change", () => {
+      if (select.checked) selectedPapers.add(paper.filename);
+      else selectedPapers.delete(paper.filename);
+      updateBulkControls();
+    });
+    selectLabel.append(select);
     const details = document.createElement("div");
     details.className = "paper-details";
     details.append(openButton);
@@ -167,7 +218,7 @@ function renderPapers() {
     actions.append(starButton, readLink);
     if (["completed", "partial"].includes(paper.ocr_status)) actions.append(markdownLink);
     actions.append(ocrInfo, size);
-    item.append(details, actions);
+    item.append(selectLabel, details, actions);
     paperList.append(item);
   });
 }
@@ -176,20 +227,15 @@ async function retryOcr(paper) {
   if (pendingOcr.has(paper.filename) || paper.ocr_status === "processing") return;
   pendingOcr.add(paper.filename);
   renderPapers();
-  message.textContent = `正在为《${paper.name}》逐页 OCR，请等待识别完成…`;
+  message.textContent = "正在提交《" + paper.name + "》的 OCR 任务…";
   try {
-    const response = await fetch(`/api/papers/${encodeURIComponent(paper.filename)}/ocr`, { method: "POST" });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.detail || "OCR 请求失败");
-    Object.assign(paper, result);
-    message.textContent = result.ocr_status === "completed"
-      ? `《${paper.name}》OCR 完成，可下载 JSON。`
-      : `《${paper.name}》OCR 未完成：${result.ocr_error || "请稍后重试"}`;
+    await submitTask(paper.filename, "ocr", { skip_existing: false });
+    message.textContent = "《" + paper.name + "》已加入后台任务队列。可在后台任务面板查看进度。";
+    refreshTasks();
   } catch (error) {
     message.textContent = error.message;
   } finally {
     pendingOcr.delete(paper.filename);
-    renderPapers();
     loadPapers(currentPage).catch((error) => { message.textContent = error.message; });
   }
 }
@@ -337,6 +383,202 @@ async function openPaper(filename) {
   }
 }
 
+
+selectPagePapers.addEventListener("change", () => {
+  papers.items.forEach(paper => {
+    if (selectPagePapers.checked) selectedPapers.add(paper.filename);
+    else selectedPapers.delete(paper.filename);
+  });
+  renderPapers();
+});
+
+document.querySelectorAll("[data-bulk-action]").forEach(button => {
+  button.addEventListener("click", () => runBulkAction(button.dataset.bulkAction));
+});
+
+clearBulkProgress.addEventListener("click", () => {
+  bulkProgress.hidden = true;
+  bulkResults.replaceChildren();
+});
+
+function appendBulkResult(paper, status, detail) {
+  const item = document.createElement("li");
+  item.dataset.status = status;
+  const state = document.createElement("span");
+  state.className = "bulk-result-state";
+  state.textContent = status === "done" ? "完成" : status === "skipped" ? "跳过" : status === "running" ? "处理中" : "失败";
+  const text = document.createElement("span");
+  text.textContent = "《" + paper.name + "》" + (detail ? "：" + detail : "");
+  item.append(state, text);
+  bulkResults.append(item);
+  bulkProgress.hidden = false;
+  item.scrollIntoView?.({ block: "nearest" });
+  return item;
+}
+
+async function requestJson(url, options) {
+  const response = await fetch(url, options);
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.detail || result.ocr_error || "请求失败");
+  return result;
+}
+
+const taskLabels = { ocr: "OCR", references: "提取参考文献", metadata: "提取标题和摘要", markdown: "转 Markdown", translation: "翻译 Markdown" };
+const taskStates = { queued: "排队中", running: "运行中", completed: "完成", skipped: "跳过", failed: "失败", cancelled: "已取消", interrupted: "已中断" };
+
+async function submitTask(filename, action, options = {}) {
+  return requestJson("/api/tasks", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ filename, action, ...options }),
+  });
+}
+
+async function awaitTask(taskId) {
+  while (true) {
+    const task = await requestJson("/api/tasks/" + encodeURIComponent(taskId));
+    if (!["queued", "running"].includes(task.status)) return task;
+    await new Promise(resolve => setTimeout(resolve, 1500));
+  }
+}
+
+function taskDuration(task) {
+  const from = Date.parse(task.started_at || task.created_at);
+  const to = task.finished_at ? Date.parse(task.finished_at) : Date.now();
+  const seconds = Math.max(0, Math.floor((to - from) / 1000));
+  return seconds < 60 ? seconds + " 秒" : Math.floor(seconds / 60) + " 分钟";
+}
+
+async function showTaskResult(id) {
+  const task = await requestJson("/api/tasks/" + encodeURIComponent(id));
+  viewedTask = task;
+  taskResultStatus.textContent = (taskLabels[task.action] || task.action) + " · " + (taskStates[task.status] || task.status) + " · " + task.title;
+  taskResultContent.textContent = task.error || JSON.stringify(task.result, null, 2) || "暂无结果";
+  applyTaskResult.hidden = task.status !== "completed" || !["references", "metadata"].includes(task.action);
+  taskResultDialog.showModal();
+}
+
+document.querySelector("#close-task-result").addEventListener("click", () => taskResultDialog.close());
+applyTaskResult.addEventListener("click", async () => {
+  const task = viewedTask;
+  if (!task || task.status !== "completed") return;
+  if (paperDialog.open && !window.confirm("填入任务结果会替换对应的编辑内容，继续吗？")) return;
+  taskResultDialog.close();
+  if (!paperDialog.open || selectedFilename !== task.filename) {
+    if (paperDialog.open) paperDialog.close();
+    await openPaper(task.filename);
+  }
+  if (saveButton.disabled || selectedFilename !== task.filename) return;
+  if (task.action === "references" && Array.isArray(task.result?.references)) {
+    referenceEntries = task.result.references; referencesRevision++; referencesSearch.value = ""; renderReferences();
+    referencesStatus.textContent = "已填入后台任务结果，请检查后保存。";
+  } else if (task.action === "metadata") {
+    if (task.result?.title?.trim()) { paperTitle.value = task.result.title; metadataRevisions.title++; }
+    if (task.result?.abstract?.trim()) { paperAbstract.value = task.result.abstract; metadataRevisions.abstract++; }
+    metadataStatus.textContent = "已填入后台任务结果，请检查后保存。";
+  }
+});
+
+let taskRefreshTimer;
+let tasksRefreshing = false;
+let taskSignature = null;
+async function refreshTasks() {
+  if (tasksRefreshing) return;
+  tasksRefreshing = true;
+  clearTimeout(taskRefreshTimer);
+  try {
+    const data = await requestJson("/api/tasks?limit=100");
+    const counts = data.counts || {};
+    taskCounts.textContent = data.workers + " 个 worker · 排队 " + (counts.queued || 0) + " · 运行 " + (counts.running || 0) + " · 完成 " + (counts.completed || 0) + " · 跳过 " + (counts.skipped || 0) + " · 失败/中断 " + ((counts.failed || 0) + (counts.interrupted || 0));
+    const signature = JSON.stringify((data.tasks || []).map(task => [task.id, task.status]));
+    if (taskSignature !== null && taskSignature !== signature) loadPapers(currentPage).catch(error => { message.textContent = error.message; });
+    taskSignature = signature;
+    taskList.replaceChildren();
+    for (const task of data.tasks || []) {
+      const item = document.createElement("li");
+      item.dataset.status = task.status;
+      const heading = document.createElement("strong");
+      heading.textContent = (taskStates[task.status] || task.status) + " · " + (taskLabels[task.action] || task.action);
+      const name = document.createElement("span"); name.className = "task-paper-name"; name.textContent = task.title || task.filename;
+      const age = document.createElement("span"); age.className = "task-age"; age.textContent = taskDuration(task);
+      item.append(heading, name, age);
+      if (task.worker && task.status === "running") { const worker = document.createElement("small"); worker.textContent = task.worker; item.append(worker); }
+      if (task.error) { const error = document.createElement("p"); error.className = "task-error"; error.textContent = task.error; item.append(error); }
+      if (task.status === "queued" || ["failed", "interrupted", "cancelled"].includes(task.status)) {
+        const control = document.createElement("button"); control.type = "button"; control.textContent = task.status === "queued" ? "取消" : "重试";
+        control.addEventListener("click", async () => {
+          control.disabled = true;
+          try { await requestJson("/api/tasks/" + encodeURIComponent(task.id) + "/" + (task.status === "queued" ? "cancel" : "retry"), { method: "POST" }); await refreshTasks(); }
+          catch (error) { message.textContent = error.message; control.disabled = false; }
+        });
+        item.append(control);
+      }
+      if (["completed", "failed", "interrupted"].includes(task.status)) {
+        const detail = document.createElement("button"); detail.type = "button"; detail.textContent = "查看结果";
+        detail.addEventListener("click", () => showTaskResult(task.id).catch(error => { message.textContent = error.message; }));
+        item.append(detail);
+      }
+      taskList.append(item);
+    }
+    if (!(data.tasks || []).length) {
+      const empty = document.createElement("li"); empty.textContent = "暂无后台任务"; taskList.append(empty);
+    }
+  } catch (error) { taskCounts.textContent = "任务状态暂不可用：" + error.message; }
+  finally {
+    tasksRefreshing = false;
+    taskRefreshTimer = setTimeout(refreshTasks, 2500);
+    taskRefreshTimer?.unref?.();
+  }
+}
+
+async function runBulkAction(action) {
+  if (bulkInProgress || !selectedPapers.size) return;
+  const queue = [...selectedPapers].map(filename => paperCache.get(filename)).filter(Boolean);
+  if (!queue.length) return;
+  bulkInProgress = true;
+  bulkResults.replaceChildren();
+  bulkProgress.hidden = false;
+  const labels = { ocr: "批量 OCR", references: "批量提取参考文献", markdown: "批量转 Markdown" };
+  bulkProgressTitle.textContent = labels[action] + "：提交中，共 " + queue.length + " 篇";
+  renderPapers();
+  let submitted = 0;
+  for (const paper of queue) {
+    const row = appendBulkResult(paper, "running", (submitted + 1) + "/" + queue.length);
+    const state = row.querySelector(".bulk-result-state");
+    const text = row.children[1];
+    try {
+      if (action === "ocr" && ["completed", "partial"].includes(paper.ocr_status)) {
+        row.dataset.status = "skipped"; state.textContent = "跳过"; text.textContent = "《" + paper.name + "》：已有 OCR";
+        continue;
+      }
+      if (action === "references" && paper.references_count > 0) {
+        row.dataset.status = "skipped"; state.textContent = "跳过"; text.textContent = "《" + paper.name + "》：已有 " + paper.references_count + " 条参考文献";
+        continue;
+      }
+      if (action === "references" && paper.references_processing) {
+        row.dataset.status = "skipped"; state.textContent = "跳过"; text.textContent = "《" + paper.name + "》：参考文献任务正在进行";
+        continue;
+      }
+      if (action === "markdown" && (paper.markdown_available || !["completed", "partial"].includes(paper.ocr_status))) {
+        row.dataset.status = "skipped"; state.textContent = "跳过";
+        text.textContent = "《" + paper.name + "》：" + (paper.markdown_available ? "已有 Markdown" : "尚无可用 OCR");
+        continue;
+      }
+      const options = action === "references" ? { save_result: true, skip_existing: true } : { skip_existing: true };
+      const task = await submitTask(paper.filename, action, options);
+      row.dataset.status = "queued"; state.textContent = "已排队"; text.textContent = "《" + paper.name + "》：任务已排队";
+      submitted++;
+    } catch (error) {
+      row.dataset.status = "failed"; state.textContent = "失败"; text.textContent = "《" + paper.name + "》：" + error.message;
+    }
+  }
+  selectedPapers.clear();
+  bulkInProgress = false;
+  updateBulkControls();
+  await loadPapers(currentPage).catch(error => { message.textContent = error.message; });
+  bulkProgressTitle.textContent = labels[action] + "：已提交 " + submitted + " 篇，详细状态见后台任务";
+  refreshTasks();
+}
+
 async function loadPapers(page = currentPage) {
   const requestId = ++papersRequestId;
   const params = new URLSearchParams({
@@ -349,6 +591,7 @@ async function loadPapers(page = currentPage) {
   const result = await response.json();
   if (requestId !== papersRequestId) return;
   papers = { items: result.papers, ...result };
+  papers.items.forEach(paper => paperCache.set(paper.filename, paper));
   renderPapers();
   clearTimeout(ocrRefreshTimer);
   if (papers.items.some((paper) => paper.ocr_status === "processing")) {
@@ -409,7 +652,7 @@ form.addEventListener("submit", async (event) => {
   const uploadButton = form.querySelector('button[type="submit"]');
   uploadButton.disabled = true;
   fileInput.disabled = true;
-  message.textContent = "正在上传并逐页 OCR，请等待识别完成...";
+  message.textContent = "正在上传文件；OCR 会自动加入后台队列。";
   try {
     const response = await fetch("/upload", { method: "POST", body: uploadBody });
     if (!response.ok) {
@@ -419,9 +662,10 @@ form.addEventListener("submit", async (event) => {
     const result = await response.json();
     form.reset();
     renderPendingFiles([]);
-    message.textContent = `已上传 ${result.filenames.length} 个文件` +
+    message.textContent = `已上传 ${result.filenames.length} 个文件，OCR 已加入后台队列` +
       (result.duplicates.length ? `，跳过 ${result.duplicates.length} 个重复文件：${result.duplicates.join("、")}` : "");
     await loadPapers();
+    refreshTasks();
   } catch (error) {
     message.textContent = error.message;
   } finally {
@@ -435,95 +679,55 @@ extractMetadataButton.addEventListener("click", async () => {
   const version = paperEditorVersion;
   const revisions = { ...metadataRevisions };
   const previous = { title: paperTitle.value, abstract: paperAbstract.value };
-  extractMetadataButton.disabled = true;
-  extractReferenceButton.disabled = true;
-  saveButton.disabled = true;
-  deleteButton.disabled = true;
-  extractMetadataButton.textContent = "正在提取…";
-  metadataStatus.textContent = "正在提取原标题和完整摘要，不会改写或总结原文…";
+  extractMetadataButton.disabled = true; extractReferenceButton.disabled = true; saveButton.disabled = true; deleteButton.disabled = true;
+  metadataStatus.textContent = "标题和摘要提取任务已提交后台；可关闭窗口，任务面板会显示状态。";
   try {
-    const response = await fetch(
-      "/api/papers/" + encodeURIComponent(filename) + "/metadata/extract", { method: "POST" },
-    );
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.detail || "标题和摘要提取失败");
+    const queued = await submitTask(filename, "metadata"); refreshTasks();
+    const task = await awaitTask(queued.id);
     if (version !== paperEditorVersion || !paperDialog.open) return;
-    if (typeof result.title !== "string" || typeof result.abstract !== "string") {
-      throw new Error("标题和摘要返回格式无效，原有内容已保留。");
-    }
+    if (task.status !== "completed") throw new Error(task.error || "标题和摘要提取未完成");
+    const result = task.result || {};
     const messages = [];
     for (const [field, label, input] of [["title", "标题", paperTitle], ["abstract", "摘要", paperAbstract]]) {
-      if (metadataRevisions[field] !== revisions[field] || input.value !== previous[field]) {
-        messages.push(label + "在提取期间已编辑，保留你的输入");
-      } else if (!result[field].trim()) {
-        messages.push("未找到可确认的完整" + label + "，保留原内容");
-      } else {
-        input.value = result[field];
-        messages.push(label + "已填入");
-      }
+      if (metadataRevisions[field] !== revisions[field] || input.value !== previous[field]) messages.push(label + "在提取期间已编辑，保留你的输入");
+      else if (!result[field]?.trim()) messages.push("未找到可确认的完整" + label + "，保留原内容");
+      else { input.value = result[field]; messages.push(label + "已填入"); }
     }
-    const warnings = Array.isArray(result.warnings) ? result.warnings.join("；") : "";
-    metadataStatus.textContent = messages.join("；") + "。请检查后点击保存。" + (warnings ? " 提醒：" + warnings : "");
-  } catch (error) {
-    if (version === paperEditorVersion && paperDialog.open) metadataStatus.textContent = error.message;
-  } finally {
+    metadataStatus.textContent = messages.join("；") + "。请检查后点击保存。" + (result.warnings?.length ? " 提醒：" + result.warnings.join("；") : "");
+  } catch (error) { if (version === paperEditorVersion && paperDialog.open) metadataStatus.textContent = error.message; }
+  finally {
     if (version === paperEditorVersion && paperDialog.open) {
-      extractMetadataButton.disabled = false;
-      extractReferenceButton.disabled = false;
-      saveButton.disabled = false;
-      deleteButton.disabled = false;
-      extractMetadataButton.textContent = "提取标题和摘要";
+      extractMetadataButton.disabled = false; extractReferenceButton.disabled = false; saveButton.disabled = false; deleteButton.disabled = false;
     }
+    refreshTasks();
   }
 });
 
 extractReferenceButton.addEventListener("click", async () => {
   if (extractReferenceButton.disabled) return;
   if (referenceEntries.length && !window.confirm("重新提取会替换当前文献列表（保存后生效），继续吗？")) return;
-  const filename = selectedFilename;
-  const version = paperEditorVersion;
-  const revision = referencesRevision;
-  extractReferenceButton.disabled = true;
-  extractMetadataButton.disabled = true;
-  extractReferenceButton.textContent = "正在提取…";
-  saveButton.disabled = true;
-  deleteButton.disabled = true;
-  referencesStatus.textContent = "正在扫描全文并逐条提取参考文献，长论文可能需要几分钟…";
+  const filename = selectedFilename, version = paperEditorVersion, revision = referencesRevision;
+  extractReferenceButton.disabled = true; extractMetadataButton.disabled = true; saveButton.disabled = true; deleteButton.disabled = true;
+  referencesStatus.textContent = "参考文献提取任务已提交后台；可关闭窗口，任务面板会显示状态。";
   referencesList.setAttribute("aria-busy", "true");
   try {
-    const response = await fetch(
-      "/api/papers/" + encodeURIComponent(filename) + "/references", { method: "POST" },
-    );
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.detail || "参考文献提取失败");
+    const queued = await submitTask(filename, "references", { skip_existing: false }); refreshTasks();
+    const task = await awaitTask(queued.id);
     if (version !== paperEditorVersion || !paperDialog.open) return;
-    if (referencesRevision !== revision) {
-      referencesStatus.textContent = "提取期间文献列表已被编辑，保留了你的修改；可再次提取。";
-      return;
-    }
+    if (task.status !== "completed") throw new Error(task.error || "参考文献提取未完成");
+    if (referencesRevision !== revision) { referencesStatus.textContent = "提取期间文献列表已被编辑，保留了你的修改；可再次提取。"; return; }
+    const result = task.result || {};
     if (!Array.isArray(result.references)) throw new Error("参考文献返回格式无效，原列表已保留。");
-    const warnings = Array.isArray(result.warnings) ? result.warnings.join("；") : "";
-    if (!result.references.length) {
-      referencesStatus.textContent = "未识别到参考文献，原列表已保留，请核对原文和 OCR。" + (warnings ? " 提醒：" + warnings : "");
-      return;
-    }
-    referenceEntries = result.references;
-    referencesRevision++;
-    referencesSearch.value = "";
-    renderReferences();
-    referencesStatus.textContent = "已扫描 " + result.total_pages + " 页，提取 " + referenceEntries.length +
-      " 条参考文献。请展开核对，点击保存后生效。" + (warnings ? " 提醒：" + warnings : "");
-  } catch (error) {
-    if (version === paperEditorVersion && paperDialog.open) referencesStatus.textContent = error.message;
-  } finally {
+    if (!result.references.length) { referencesStatus.textContent = "未识别到参考文献，原列表已保留，请核对原文和 OCR。"; return; }
+    referenceEntries = result.references; referencesRevision++; referencesSearch.value = ""; renderReferences();
+    referencesStatus.textContent = "后台提取完成：扫描 " + result.total_pages + " 页，提取 " + referenceEntries.length + " 条。请核对后点击保存。" + (result.warnings?.length ? " 提醒：" + result.warnings.join("；") : "");
+  } catch (error) { if (version === paperEditorVersion && paperDialog.open) referencesStatus.textContent = error.message; }
+  finally {
     if (version === paperEditorVersion && paperDialog.open) {
-      extractReferenceButton.disabled = false;
-      extractMetadataButton.disabled = false;
-      extractReferenceButton.textContent = "提取全部参考文献";
-      saveButton.disabled = false;
-      deleteButton.disabled = false;
+      extractReferenceButton.disabled = false; extractMetadataButton.disabled = false; saveButton.disabled = false; deleteButton.disabled = false;
       referencesList.setAttribute("aria-busy", "false");
     }
+    refreshTasks();
   }
 });
 
@@ -597,3 +801,4 @@ paperForm.addEventListener("submit", async (event) => {
 });
 
 loadPapers().catch((error) => { message.textContent = error.message; });
+refreshTasks();

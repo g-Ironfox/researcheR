@@ -3,6 +3,10 @@ from typing import Annotated, Literal
 from uuid import uuid4
 from hashlib import sha256
 import json
+import os
+from contextlib import asynccontextmanager
+
+from task_queue import TaskQueue, SkipTask
 
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
@@ -27,7 +31,30 @@ markdown_in_progress: set[str] = set()
 translation_in_progress: set[str] = set()
 MarkdownLanguage = Literal["original", "zh"]
 
-app = FastAPI(title="论文库")
+@asynccontextmanager
+async def lifespan(app):
+    workers = int(os.environ.get("TASK_WORKERS", "3"))
+    if not 1 <= workers <= 32:
+        raise ValueError("TASK_WORKERS must be between 1 and 32")
+    queue = TaskQueue(workers=workers)
+    await queue.redis.ping()
+    app.state.task_queue = queue
+    try:
+        yield
+    finally:
+        app.state.task_queue = None
+        await queue.redis.aclose()
+
+
+app = FastAPI(title="论文库", lifespan=lifespan)
+
+def task_queue():
+    queue = getattr(app.state, "task_queue", None)
+    if queue is None:
+        raise HTTPException(status_code=503, detail="后台任务服务尚未启动")
+    return queue
+
+
 app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
 
 
@@ -83,8 +110,20 @@ async def list_papers(
             "size_kb": round(paper.stat().st_size / 1024),
             **read_ocr_summary(paper),
             "markdown_available": paper.with_suffix(".md").is_file(),
+            "references_count": len(metadata["references"]),
+            "references_processing": paper.name in reference_in_progress,
             **({"ocr_status": "processing"} if paper.name in ocr_in_progress else {}),
+            **({"markdown_processing": True} if paper.name in markdown_in_progress else {}),
         })
+    queue = getattr(app.state, "task_queue", None)
+    active = await queue.active() if queue else []
+    for paper in matches:
+        tasks = [task for task in active if task["filename"] == paper["filename"]]
+        actions = {task["action"] for task in tasks}
+        if "ocr" in actions:
+            paper["ocr_status"] = "processing"
+        paper["references_processing"] = paper["references_processing"] or "references" in actions
+        paper["markdown_processing"] = bool(paper.get("markdown_processing")) or bool(actions & {"markdown", "translation"})
     papers_per_page = 20
     total = len(matches)
     page_count = max(1, (total + papers_per_page - 1) // papers_per_page)
@@ -149,7 +188,7 @@ async def run_paper_ocr(path: Path, original_filename: str) -> dict[str, str | b
 
 
 @app.post("/upload")
-async def upload(files: Annotated[list[UploadFile], File()]) -> dict:
+async def upload(files: Annotated[list[UploadFile], File()], background: bool = Query(True)) -> dict:
     if not files:
         raise HTTPException(status_code=400, detail="请至少选择一个 PDF 文件")
 
@@ -173,6 +212,7 @@ async def upload(files: Annotated[list[UploadFile], File()]) -> dict:
     filenames: list[str] = []
     duplicates: list[str] = []
     ocr_results = []
+    tasks = []
     for file, header in zip(files, headers):
         destination = UPLOAD_DIR / f"{uuid4().hex}.pdf"
         digest = sha256()
@@ -200,9 +240,12 @@ async def upload(files: Annotated[list[UploadFile], File()]) -> dict:
             encoding="utf-8",
         )
         filenames.append(destination.name)
-        summary = await run_paper_ocr(destination, file.filename)
-        ocr_results.append({"filename": destination.name, "name": file.filename, **summary})
-    return {"filenames": filenames, "duplicates": duplicates, "ocr_results": ocr_results}
+        if background and getattr(app.state, "task_queue", None):
+            tasks.append(await enqueue_task(TaskRequest(filename=destination.name, action="ocr", skip_existing=True)))
+        else:
+            summary = await run_paper_ocr(destination, file.filename)
+            ocr_results.append({"filename": destination.name, "name": file.filename, **summary})
+    return {"filenames": filenames, "duplicates": duplicates, "ocr_results": ocr_results, "tasks": tasks}
 
 
 @app.get("/api/papers/{filename}")
@@ -279,6 +322,9 @@ async def update_paper_star(filename: str, star: PaperStar) -> dict[str, bool]:
 @app.delete("/api/papers/{filename}", status_code=204)
 async def delete_paper(filename: str) -> None:
     path = get_paper_path(filename)
+    queue = getattr(app.state, "task_queue", None)
+    if queue and await queue.active(filename):
+        raise HTTPException(status_code=409, detail="论文有排队或运行中的后台任务，请等待完成或取消排队任务")
     if filename in metadata_in_progress:
         raise HTTPException(status_code=409, detail="正在提取标题和摘要，请完成后再删除")
     if filename in reference_in_progress:
@@ -361,10 +407,18 @@ async def get_paper_markdown(
     except OSError as error:
         raise HTTPException(status_code=500, detail="无法读取 Markdown 文件") from error
     in_progress = translation_in_progress if language == "zh" else markdown_in_progress
+    queue = getattr(app.state, "task_queue", None)
+    action = "translation" if language == "zh" else "markdown"
+    latest = await queue.latest(filename, action) if queue else None
+    if not content and latest and latest["status"] in {"failed", "interrupted", "cancelled"}:
+        task_status = "failed"
+    else:
+        task_status = "generating" if (filename in in_progress or (queue and await queue.active(filename, action))) else "ready" if content else "not_generated"
     return {
         "title": str(read_paper_metadata(path)["title"]),
         "language": language,
-        "status": "generating" if filename in in_progress else "ready" if content else "not_generated",
+        "status": task_status,
+        "error": latest["error"] if task_status == "failed" else "",
         "content": content,
         "html": render_paper_markdown(content) if content else "",
     }
@@ -373,8 +427,14 @@ async def get_paper_markdown(
 @app.post("/api/papers/{filename}/markdown")
 async def create_paper_markdown(
     filename: str, force: bool = Query(False), language: MarkdownLanguage = Query("original"),
+    background: bool = Query(False),
 ) -> dict[str, str | bool]:
     path = get_paper_path(filename)
+    if background:
+        action = "translation" if language == "zh" else "markdown"
+        queued = await enqueue_task(TaskRequest(filename=filename, action=action, force=force, skip_existing=not force))
+        return {"title": str(read_paper_metadata(path)["title"]), "language": language,
+                "status": "generating", "content": "", "html": "", "task_id": queued["id"]}
     if filename in ocr_in_progress:
         raise HTTPException(status_code=409, detail="OCR 尚未完成，请稍后生成 Markdown")
     if filename in markdown_in_progress:
@@ -451,3 +511,89 @@ def preview_paper(filename: str) -> FileResponse:
 async def get_paper(filename: str) -> FileResponse:
     path = get_paper_path(filename)
     return FileResponse(path, media_type="application/pdf", filename=path.name)
+
+
+TaskAction = Literal["ocr", "references", "metadata", "markdown", "translation"]
+
+
+class TaskRequest(BaseModel):
+    filename: str
+    action: TaskAction
+    skip_existing: bool = True
+    save_result: bool = False
+    force: bool = False
+
+
+@app.post("/api/tasks", status_code=202)
+async def enqueue_task(request: TaskRequest) -> dict:
+    path = get_paper_path(request.filename)
+    if request.save_result and request.action != "references":
+        raise HTTPException(status_code=422, detail="仅参考文献任务支持自动保存")
+    if request.force and request.skip_existing:
+        raise HTTPException(status_code=422, detail="强制重新处理不能同时跳过已有结果")
+    try:
+        return await task_queue().submit(path.name, str(read_paper_metadata(path)["title"]), request.action,
+                                         request.model_dump(exclude={"filename", "action"}))
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@app.get("/api/tasks")
+async def list_tasks(limit: int = Query(100, ge=1, le=2000)) -> dict:
+    return await task_queue().listing(limit)
+
+
+@app.get("/api/tasks/{task_id}")
+async def get_task(task_id: str) -> dict:
+    task = await task_queue().get(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return task
+
+
+@app.post("/api/tasks/{task_id}/cancel")
+async def cancel_task(task_id: str) -> dict:
+    await get_task(task_id)
+    if not await task_queue().cancel(task_id):
+        raise HTTPException(status_code=409, detail="只能取消尚未开始的排队任务")
+    return await get_task(task_id)
+
+
+@app.post("/api/tasks/{task_id}/retry", status_code=202)
+async def retry_task(task_id: str) -> dict:
+    task = await get_task(task_id)
+    if task["status"] not in {"failed", "interrupted", "cancelled"}:
+        raise HTTPException(status_code=409, detail="只有失败、中断或取消的任务可重试")
+    return await enqueue_task(TaskRequest(filename=task["filename"], action=task["action"], **task["options"]))
+
+
+async def execute_task(task: dict) -> dict:
+    filename, action, options = task["filename"], task["action"], task["options"]
+    path = get_paper_path(filename)
+    if action == "ocr":
+        if options["skip_existing"] and read_ocr_summary(path)["ocr_status"] in {"completed", "partial"}:
+            raise SkipTask("已有 OCR 结果")
+        result = await retry_paper_ocr(filename)
+        if result["ocr_status"] != "completed":
+            raise ValueError(result.get("ocr_error") or "OCR 未完整完成，请检查 OCR JSON")
+        return result
+    if action == "references":
+        if options["skip_existing"] and read_paper_metadata(path)["references"]:
+            raise SkipTask("已有结构化参考文献")
+        result = await create_paper_references(filename)
+        if not result["references"]:
+            raise SkipTask("未识别到参考文献，原数据未改变")
+        if options["save_result"]:
+            # Re-read after the long model call, preserving edits/star state.
+            latest = read_paper_metadata(path)
+            if options["skip_existing"] and latest["references"]:
+                raise SkipTask("提取期间已有参考文献被保存，保留现有数据")
+            latest["references"] = result["references"]
+            await update_paper_metadata(filename, PaperMetadata(**latest))
+        return result
+    if action == "metadata":
+        return await extract_paper_details(filename)
+    language = "zh" if action == "translation" else "original"
+    if options["skip_existing"] and paper_markdown_path(path, language).is_file():
+        raise SkipTask("已有中文译文" if language == "zh" else "已有 Markdown")
+    return await create_paper_markdown(filename, force=options["force"], language=language, background=False)

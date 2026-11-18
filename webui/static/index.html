@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>researcheR</title>
-  <link rel="stylesheet" href="/static/styles.css?v=29">
-  <script src="/static/app.js?v=24" defer></script>
+  <link rel="stylesheet" href="/static/styles.css?v=31">
+  <script src="/static/app.js?v=26" defer></script>
 </head>
 <body>
   <header>
@@ -22,7 +22,7 @@
         <label class="file-picker" for="file-input">
           <span class="file-copy">
             <strong>选择 PDF 文件</strong>
-            <small>可多选，上传后逐页 OCR 并生成可下载的 JSON</small>
+          <small>可多选，上传后自动加入后台 OCR 队列</small>
           </span>
           <span class="choose-label">浏览文件</span>
         </label>
@@ -43,7 +43,24 @@
           <span class="paper-total">共 <span id="paper-count">0</span> 篇</span>
         </div>
       </div>
+      <div id="bulk-toolbar" class="bulk-toolbar" hidden>
+        <label class="bulk-select-all"><input type="checkbox" id="select-page-papers"> <span>全选本页</span></label>
+        <span id="bulk-selected-count" aria-live="polite">已选 0 篇</span>
+        <div class="bulk-actions" role="group" aria-label="批量操作">
+          <button type="button" data-bulk-action="ocr">OCR</button>
+          <button type="button" data-bulk-action="references">提取参考文献</button>
+          <button type="button" data-bulk-action="markdown">转 Markdown</button>
+        </div>
+      </div>
       <ul id="paper-list" aria-label="论文列表"></ul>
+      <section class="task-panel" aria-labelledby="task-panel-title">
+        <div class="task-panel-heading"><h3 id="task-panel-title">后台任务</h3><span id="task-counts" aria-live="polite"></span></div>
+        <ul id="task-list" aria-live="polite"></ul>
+      </section>
+      <section id="bulk-progress" class="bulk-progress" aria-live="polite" hidden>
+        <div class="bulk-progress-heading"><strong id="bulk-progress-title"></strong><button type="button" id="clear-bulk-progress" aria-label="清除批量操作结果">清除</button></div>
+        <ul id="bulk-results"></ul>
+      </section>
       <nav id="paper-pagination" class="paper-pagination" aria-label="论文列表分页" hidden>
         <button type="button" id="previous-page" aria-label="上一页">上一页</button>
         <span id="page-status" aria-live="polite"></span>
@@ -96,6 +113,13 @@
         <button type="submit" id="save-paper">保存</button>
       </div>
     </form>
+  </dialog>
+  <dialog id="task-result-dialog" aria-labelledby="task-result-title">
+    <div class="dialog-heading"><h2 id="task-result-title">任务结果</h2><button type="button" class="close-button" id="close-task-result" aria-label="关闭任务结果">×</button></div>
+    <p id="task-result-status"></p>
+    <pre id="task-result-content"></pre>
+    <button type="button" id="apply-task-result" hidden>填入论文编辑窗口</button>
+    <p class="references-help">单篇提取结果保留在任务记录中；填入编辑窗口后，检查并点击保存。批量提取的参考文献会自动保存。</p>
   </dialog>
 </body>
 </html>
