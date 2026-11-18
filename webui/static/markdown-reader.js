@@ -82,10 +82,6 @@ async function loadDocument() {
     showDocument(document);
     if (document.status === "not_generated") {
       await generateDocument(false, sequence, currentLanguage);
-    } else if (document.status === "generating") {
-      window.setTimeout(() => {
-        if (sequence === loadSequence) loadDocument();
-      }, 2000);
     }
   } catch (error) {
     if (sequence !== loadSequence) return;
@@ -113,7 +109,6 @@ async function generateDocument(force, sequence = loadSequence, currentLanguage 
     const document = await readMarkdownResponse(response, currentLanguage === "zh" ? "中文翻译失败" : "Markdown 生成失败");
     if (sequence === loadSequence) {
       showDocument(document);
-      if (document.status === "generating") window.setTimeout(() => { if (sequence === loadSequence) loadDocument(); }, 2000);
     }
   } catch (error) {
     if (sequence === loadSequence) {
@@ -146,3 +141,26 @@ regenerateButton.addEventListener("click", () => {
 });
 selectLanguage(language);
 loadDocument();
+
+let taskEvents;
+function connectTaskEvents() {
+  if (taskEvents) return;
+  taskEvents = new EventSource("/api/tasks/events?limit=1");
+  taskEvents.addEventListener("tasks", event => {
+    try {
+      const data = JSON.parse(event.data);
+      const action = language === "zh" ? "translation" : "markdown";
+      if (!Object.hasOwn(data, "changed") || (data.changed?.filename === filename && data.changed.action === action)) {
+        loadDocument();
+      }
+    } catch (error) {
+      status.textContent = "任务状态更新失败：" + error.message;
+    }
+  });
+  taskEvents.onerror = () => {
+    status.textContent = "任务状态连接中断，正在重新连接…";
+  };
+}
+window.addEventListener("pagehide", () => { taskEvents?.close(); taskEvents = null; });
+window.addEventListener("pageshow", () => connectTaskEvents());
+connectTaskEvents();

@@ -1,0 +1,2 @@
+# The task handlers currently share the WebUI backend dependencies.
+-r ../webui/requirements.txt

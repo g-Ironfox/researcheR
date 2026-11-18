@@ -49,7 +49,16 @@ export async function runReferenceUiTests() {
   let batchMode = false;
   const calls = [];
   let pending, pendingMetadata, failure, confirmation = true;
-  const taskResolvers = new Map();
+  const streams = [];
+  const windowEvents = {};
+  const localTimers = [];
+  const delayedReads = new Map();
+  class MockEventSource {
+    constructor(url) { this.url = url; this.listeners = {}; streams.push(this); }
+    addEventListener(name, callback) { this.listeners[name] = callback; }
+    emit(data) { this.listeners.tasks({data: JSON.stringify(data)}); }
+    close() { this.closed = true; }
+  }
   const taskValues = new Map();
   let taskSequence = 0;
   const citation = (title = 'First reference', number = '1') => ({
@@ -64,20 +73,22 @@ export async function runReferenceUiTests() {
       querySelectorAll: selector => selector === "[data-bulk-action]" ? batchButtons : [],
       createElement: element,
     },
-    window: { confirm: () => confirmation }, URLSearchParams, setTimeout, clearTimeout,
+    window: { confirm: () => confirmation, addEventListener: (name, callback) => { windowEvents[name] = callback; } },
+    EventSource: MockEventSource, URLSearchParams, setTimeout, clearTimeout,
+    setInterval: callback => { localTimers.push(callback); return {unref() {}}; },
     fetch: async (url, options) => {
       calls.push([url, options]);
       if (url === '/api/tasks?limit=100') return reply(queueListing);
       if (url === '/api/tasks' && options?.method === 'POST') {
         const request = JSON.parse(options.body);
         const id = 'task-' + request.action + '-' + (++taskSequence);
-        const finishTask = response => response.json().then(payload => { const data = {id, status: response.ok ? 'completed' : 'failed', result: payload, error: payload.detail || ''}; taskValues.set(id, data); taskResolvers.get(id)?.(data); });
+        const finishTask = response => response.json().then(payload => { const data = {id, status: response.ok ? 'completed' : 'failed', result: payload, error: payload.detail || ''}; taskValues.set(id, data); streams.at(-1).emit({...queueListing, changed: data}); });
         if (!batchMode && request.action === 'references') pending = finishTask;
         if (!batchMode && request.action === 'metadata') pendingMetadata = finishTask;
         return reply({id, status: 'queued'});
       }
       if (url.startsWith('/api/tasks/task-')) {
-        if (!batchMode) { const id = url.slice('/api/tasks/'.length); return new Promise(resolve => { taskResolvers.set(id, data => resolve(reply(data))); if (taskValues.has(id)) taskResolvers.get(id)(taskValues.get(id)); }); }
+        if (!batchMode) { const id = url.slice('/api/tasks/'.length); if (delayedReads.has(id)) { const response = delayedReads.get(id); delayedReads.delete(id); return response; } return reply(taskValues.get(id) || {id, status: 'queued'}); }
         return reply({id: url.slice('/api/tasks/'.length), status: 'completed', result: batchResponses.task || {}});
       }
       if (url.startsWith('/api/papers?')) return reply({papers: listing, total: listing.length, page: 1, page_count: 1});
@@ -434,13 +445,54 @@ export async function runReferenceUiTests() {
     {...resultTask, id: 'queued', status: 'queued'},
     {...resultTask, id: 'failed', status: 'failed', error: 'Provider unavailable'},
   ]};
-  await context.refreshTasks();
+  streams.at(-1).emit(queueListing);
   const taskRows = query('#task-list').children;
   assert.equal(taskRows.length, 3);
   assert.ok(taskRows[0].children.some(child => child.textContent === 'worker-2'));
   assert.ok(taskRows[1].children.some(child => child.textContent === '取消'));
   assert.ok(taskRows[2].children.some(child => child.textContent === '重试'));
   assert.ok(taskRows[2].children.some(child => child.textContent === 'Provider unavailable'));
+  checks++;
+
+  const tick = async () => { for (let index = 0; index < 12; index++) await Promise.resolve(); };
+  assert.equal(streams.length, 1);
+  assert.equal(streams[0].url, '/api/tasks/events?limit=100');
+  const waiting = context.awaitTask('task-sse-pending');
+  await tick();
+  const readsBeforeIdle = calls.length;
+  for (let index = 0; index < 4; index++) localTimers.forEach(callback => callback());
+  await tick();
+  assert.equal(calls.length, readsBeforeIdle, 'Elapsed clock must not query task status');
+  const done = {id: 'task-sse-pending', status: 'completed', result: {title: 'SSE result'}};
+  taskValues.set(done.id, done);
+  streams[0].emit({...queueListing, tasks: [], changed: done});
+  assert.equal((await waiting).result.title, 'SSE result', 'Completion outside the visible history must resolve the waiter');
+  checks++;
+
+  const reconnectWaiting = context.awaitTask('task-sse-reconnect');
+  await tick();
+  taskValues.set('task-sse-reconnect', {id: 'task-sse-reconnect', status: 'completed'});
+  streams[0].onerror();
+  assert.ok(query('#task-counts').textContent.includes('重新连接'));
+  streams[0].emit({...queueListing, tasks: []});
+  assert.equal((await reconnectWaiting).status, 'completed', 'Reconnect snapshot must reconcile missed completion events');
+  checks++;
+
+  let releaseStaleRead;
+  delayedReads.set('task-sse-race', new Promise(resolve => { releaseStaleRead = resolve; }));
+  const raced = context.awaitTask('task-sse-race');
+  const racedDone = {id: 'task-sse-race', status: 'completed'};
+  taskValues.set(racedDone.id, racedDone);
+  streams[0].emit({...queueListing, changed: racedDone});
+  releaseStaleRead(reply({id: racedDone.id, status: 'queued'}));
+  assert.equal((await raced).status, 'completed', 'Completion during initial GET must not be lost');
+  assert.ok(!calls.some(([url]) => url === '/api/tasks?limit=100'), 'Task listing must come from SSE');
+  checks++;
+
+  windowEvents.pagehide();
+  assert.equal(streams[0].closed, true);
+  windowEvents.pageshow();
+  assert.equal(streams.length, 2);
   checks++;
 
   failure = true;

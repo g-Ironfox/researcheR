@@ -5,4 +5,5 @@ services:
     command: ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "/app"]
   worker:
     volumes:
-      - ./webui:/app
+      - ./worker:/app/worker
+      - ./webui:/app/webui

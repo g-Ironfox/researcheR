@@ -104,6 +104,53 @@ class QueueTests(unittest.IsolatedAsyncioTestCase):
         handler.assert_awaited_once()
         self.assertFalse(await self.queue.redis.exists(self.queue.lock_key("running.pdf")))
 
+    async def test_sse_receives_cross_client_state_changes_and_reconnect_snapshot(self):
+        publisher = TaskQueue(os.environ.get("TEST_REDIS_URL", "redis://redis:6379/0"), prefix=self.queue.prefix)
+        self.addAsyncCleanup(publisher.redis.aclose)
+        stream = self.queue.events(heartbeat=0.05)
+        self.addAsyncCleanup(stream.aclose)
+        self.assertEqual((await anext(stream))["tasks"], [])
+
+        async def change(status):
+            async with asyncio.timeout(3):
+                while True:
+                    snapshot = await anext(stream)
+                    if snapshot is not None:
+                        self.assertEqual(snapshot["changed"]["status"], status)
+                        self.assertNotIn("result", snapshot["changed"])
+                        return snapshot
+
+        task = await publisher.submit("events.pdf", "Events", "ocr", self.options)
+        self.assertEqual((await change("queued"))["changed"]["id"], task["id"])
+        await publisher.redis.brpoplpush(publisher.pending_key, publisher.processing_key, timeout=1)
+        running = await publisher.claim(task["id"], "other-container")
+        self.assertEqual((await change("running"))["changed"]["worker"], "other-container")
+        await publisher.finish(running, "completed", result={"large": "private result"})
+        self.assertEqual((await change("completed"))["counts"]["completed"], 1)
+        cancelled = await publisher.submit("cancel.pdf", "Cancel", "ocr", self.options)
+        await change("queued")
+        await publisher.cancel(cancelled["id"])
+        await change("cancelled")
+        await stream.aclose()
+        self.assertEqual((await self.queue.redis.pubsub_numsub(self.queue.events_key))[0][1], 0)
+
+        reconnect = self.queue.events()
+        self.addAsyncCleanup(reconnect.aclose)
+        snapshot = await anext(reconnect)
+        self.assertEqual(snapshot["counts"]["completed"], 1)
+        self.assertEqual(snapshot["counts"]["cancelled"], 1)
+
+    async def test_sse_heartbeat_does_not_poll_task_storage(self):
+        with patch.object(self.queue, "listing", wraps=self.queue.listing) as listing:
+            stream = self.queue.events(heartbeat=0.01)
+            try:
+                await anext(stream)
+                self.assertIsNone(await anext(stream))
+                self.assertIsNone(await anext(stream))
+                self.assertEqual(listing.await_count, 1)
+            finally:
+                await stream.aclose()
+
     async def test_actual_markdown_handler_executes_in_worker_without_requeue(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "paper.pdf"

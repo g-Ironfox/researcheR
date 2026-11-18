@@ -28,7 +28,9 @@ services:
       - researcheR_net
 
   worker:
-    build: ./webui
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
     container_name: worker_researcheR
     restart: unless-stopped
     depends_on:
@@ -40,9 +42,8 @@ services:
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
       - DEEPSEEK_CHAT_MODEL=${DEEPSEEK_CHAT_MODEL:-deepseek-flash}
       - TZ=${TZ}
-    command: ["python", "worker.py"]
     volumes:
-      - ./data/uploads:/app/uploads
+      - ./data/uploads:/app/webui/uploads
     networks:
       - researcheR_net
     

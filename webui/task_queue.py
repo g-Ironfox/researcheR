@@ -4,7 +4,6 @@ from datetime import datetime, timezone
 import json
 import logging
 import os
-import signal
 from uuid import uuid4
 
 
@@ -41,6 +40,28 @@ class TaskQueue:
 
     @property
     def active_key(self): return self.prefix + "active"
+
+    @property
+    def events_key(self): return self.prefix + "events"
+
+    async def events(self, limit=100, heartbeat=15):
+        # Subscribe before reading the snapshot so concurrent changes are not lost.
+        # Pub/Sub blocks on messages; the timeout only sends an SSE keepalive.
+        async with self.redis.pubsub() as pubsub:
+            await pubsub.subscribe(self.events_key)
+            await pubsub.get_message(timeout=None)  # Wait for the subscription acknowledgement.
+            yield await self.listing(limit)
+            while True:
+                message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=heartbeat)
+                if message is None:
+                    yield None
+                    continue
+                changed = await self.get(message["data"])
+                if changed:
+                    changed.pop("result", None)
+                snapshot = await self.listing(limit)
+                snapshot["changed"] = changed
+                yield snapshot
 
     def status_key(self, status): return self.prefix + "status:" + status
 
@@ -109,11 +130,12 @@ class TaskQueue:
             redis.call('SADD', ARGV[6], ARGV[2])
             redis.call('ZADD', ARGV[7], ARGV[4], ARGV[2])
             redis.call('SET', ARGV[8], ARGV[2])
+            redis.call('PUBLISH', ARGV[9], ARGV[2])
             return ARGV[2]
         """)
         try:
             result = await script(keys=[key, self.pending_key, self.order_key], args=[self.prefix + "item:", task_id,
-                                   json.dumps(task, ensure_ascii=False), datetime.now().timestamp(), self.active_key, self.status_key("queued"), self.paper_key(filename), self.prefix + "latest:" + filename + ":" + action])
+                                   json.dumps(task, ensure_ascii=False), datetime.now().timestamp(), self.active_key, self.status_key("queued"), self.paper_key(filename), self.prefix + "latest:" + filename + ":" + action, self.events_key])
         except Exception as error:
             if "QUEUE_FULL" in str(error): raise ValueError("任务队列已满（2000），请稍后重试") from error
             raise
@@ -139,9 +161,10 @@ class TaskQueue:
             if redis.call('GET', KEYS[3]) == ARGV[2] then redis.call('DEL', KEYS[3]) end
             redis.call('SREM', KEYS[4], ARGV[2]); redis.call('SREM', KEYS[5], ARGV[2]); redis.call('SADD', KEYS[6], ARGV[2])
             redis.call('ZREM', KEYS[7], ARGV[2])
+            redis.call('PUBLISH', ARGV[3], ARGV[2])
             return 1
         """)
-        return bool(await script(keys=[key, self.pending_key, self.dedupe_key(task["filename"], task["action"]), self.active_key, self.status_key("queued"), self.status_key("cancelled"), self.paper_key(task["filename"])], args=[now(), task_id]))
+        return bool(await script(keys=[key, self.pending_key, self.dedupe_key(task["filename"], task["action"]), self.active_key, self.status_key("queued"), self.status_key("cancelled"), self.paper_key(task["filename"])], args=[now(), task_id, self.events_key]))
 
     async def finish(self, task, status, result=None, error=""):
         task.update(status=status, finished_at=now(), result=result, error=error)
@@ -154,6 +177,7 @@ class TaskQueue:
         pipe.srem(self.status_key("running"), task["id"])
         pipe.sadd(self.status_key(status), task["id"])
         pipe.zrem(self.paper_key(task["filename"]), task["id"])
+        pipe.publish(self.events_key, task["id"])
         await pipe.execute()
         await self.trim_history()
 
@@ -218,11 +242,12 @@ class TaskQueue:
             task.status = 'running'; task.worker = ARGV[2]; task.started_at = ARGV[3]
             redis.call('SET', KEYS[1], cjson.encode(task))
             redis.call('SREM', KEYS[5], ARGV[1]); redis.call('SADD', KEYS[6], ARGV[1])
+            redis.call('PUBLISH', ARGV[4], ARGV[1])
             return 1
         """)
         claimed = await script(keys=[self.task_key(task_id), self.processing_key, self.lock_key(task["filename"]),
                                      self.pending_key, self.status_key("queued"), self.status_key("running"), self.paper_key(task["filename"])],
-                               args=[task_id, name, now()])
+                               args=[task_id, name, now(), self.events_key])
         return await self.get(task_id) if claimed else None
 
     async def run_worker(self, name, handler):
@@ -248,25 +273,3 @@ class TaskQueue:
                 detail = getattr(error, "detail", None) or str(error) or type(error).__name__
                 await self.finish(task, "failed", error=str(detail))
             logging.info("%s finished %s (%s)", name, task_id, task["status"])
-
-
-async def worker_main(handler):
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    workers = int(os.environ.get("TASK_WORKERS", "3"))
-    if not 1 <= workers <= 32:
-        raise ValueError("TASK_WORKERS must be between 1 and 32")
-    queue = TaskQueue(workers=workers)
-    stopped = asyncio.Event()
-    loop = asyncio.get_running_loop()
-    for signum in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(signum, stopped.set)
-    await queue.start_workers(handler)
-    stopper = asyncio.create_task(stopped.wait())
-    try:
-        done, _ = await asyncio.wait([*queue.worker_tasks, stopper], return_when=asyncio.FIRST_COMPLETED)
-        for task in done:
-            if task is not stopper: task.result()
-    finally:
-        stopper.cancel()
-        await asyncio.gather(stopper, return_exceptions=True)
-        await queue.stop_workers()

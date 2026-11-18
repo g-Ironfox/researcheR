@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from task_queue import TaskQueue, SkipTask
 
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import fitz
@@ -541,6 +541,22 @@ async def enqueue_task(request: TaskRequest) -> dict:
 @app.get("/api/tasks")
 async def list_tasks(limit: int = Query(100, ge=1, le=2000)) -> dict:
     return await task_queue().listing(limit)
+
+
+@app.get("/api/tasks/events")
+async def task_events(limit: int = Query(100, ge=1, le=2000)):
+    queue = task_queue()
+
+    async def stream():
+        async for snapshot in queue.events(limit):
+            if snapshot is None:
+                yield ": keepalive\n\n"
+            else:
+                yield "event: tasks\ndata: " + json.dumps(snapshot, ensure_ascii=False) + "\n\n"
+
+    return StreamingResponse(stream(), media_type="text/event-stream", headers={
+        "Cache-Control": "no-cache", "X-Accel-Buffering": "no",
+    })
 
 
 @app.get("/api/tasks/{task_id}")

@@ -5,7 +5,9 @@
 
 ## 使用
 
-开发期间叠加 `docker-compose.dev.yml` 启动（挂载 `webui/` 源码并开启热重载）：
+`webui/` 存放 WebUI 与 API；`worker/` 独立存放后台任务入口、Dockerfile 和依赖清单。worker 使用自己的镜像构建配置，目前复用 WebUI 后端的论文处理函数和 Redis 队列模块。两个容器共用 `data/uploads/`。
+
+开发期间叠加 `docker-compose.dev.yml` 启动（分别挂载 `webui/` 和 `worker/` 源码，WebUI 开启热重载）：
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
@@ -77,3 +79,11 @@ node webui/tests/test_reference_ui.mjs
 在论文列表勾选多篇论文，可跨分页保留选择；**全选本页**只选择当前筛选结果的当前页。选择后可依次执行 **OCR**、**提取参考文献** 或 **转 Markdown**。批量任务会立即写入 Redis 后台队列，并显示每篇的排队状态；独立 worker 容器按 `TASK_WORKERS` 并发处理。首页“后台任务”区域显示当前运行数、排队数、worker 名称、耗时和失败原因，支持取消排队任务及重试失败任务。关闭浏览器不会中断任务。
 
 批量 OCR 跳过已有成功 OCR 的论文（包括完整或部分结果）；失败或未配置结果可以重试。参考文献提取跳过已有结构化条目的论文，成功后自动保存且保留其他论文信息。Markdown 跳过已有 Markdown 或没有可用 OCR 的论文。上传论文也会自动加入 OCR 队列。服务重启时正在执行的任务标为中断，不自动重试；可从任务面板手动重试。OCR 和模型请求可能产生 API 用量。
+
+## 后台任务实时通知
+
+后台任务状态通过 `GET /api/tasks/events` 的 SSE 长连接实时推送，不再定时轮询任务状态、OCR 列表或 Markdown 生成进度。worker 在提交、开始、结束和取消任务时通过 Redis Pub/Sub 发布状态变更，WebUI 将变更推送到任务面板、提取窗口和 Markdown 阅读器。
+
+首次连接和断线重连都会发送当前任务快照；浏览器会自动重连，并重新检查尚未结束的提取任务，避免断线期间错过完成事件。连接空闲时每 15 秒仅发送心跳，不查询任务数据。耗时标签由浏览器本地计时更新。已有任务查询接口保留用于手动查看结果和事件触发后的按需读取。
+
+如前方使用 Nginx 等反向代理，需允许 `text/event-stream` 长连接、关闭响应缓冲，并将读取超时设置为大于心跳间隔；接口已返回 `X-Accel-Buffering: no` 和 `Cache-Control: no-cache`。部署本次更新需同时更新 WebUI 与 worker，保证 worker 会发布状态事件。
