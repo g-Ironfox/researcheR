@@ -10,7 +10,6 @@ const bulkProgress = document.querySelector("#bulk-progress");
 const bulkProgressTitle = document.querySelector("#bulk-progress-title");
 const bulkResults = document.querySelector("#bulk-results");
 const clearBulkProgress = document.querySelector("#clear-bulk-progress");
-const taskList = document.querySelector("#task-list");
 const taskCounts = document.querySelector("#task-counts");
 const taskResultDialog = document.querySelector("#task-result-dialog");
 const taskResultStatus = document.querySelector("#task-result-status");
@@ -465,12 +464,6 @@ function awaitTask(taskId) {
   return promise;
 }
 
-function taskDuration(task) {
-  const from = Date.parse(task.started_at || task.created_at);
-  const to = task.finished_at ? Date.parse(task.finished_at) : Date.now();
-  const seconds = Math.max(0, Math.floor((to - from) / 1000));
-  return seconds < 60 ? seconds + " 秒" : Math.floor(seconds / 60) + " 分钟";
-}
 
 async function showTaskResult(id) {
   const task = await requestJson("/api/tasks/" + encodeURIComponent(id));
@@ -503,7 +496,6 @@ applyTaskResult.addEventListener("click", async () => {
 });
 
 let taskSignature = null;
-let taskAges = [];
 function renderTaskSnapshot(data) {
   for (const [id, waiter] of taskWaiters) {
     const task = data.changed?.id === id ? data.changed : (data.tasks || []).find(item => item.id === id);
@@ -511,43 +503,11 @@ function renderTaskSnapshot(data) {
       checkAwaitedTask(id, waiter);
     }
   }
-  taskAges = [];
   const counts = data.counts || {};
-  taskCounts.textContent = data.workers + " 个 worker · 排队 " + (counts.queued || 0) + " · 运行 " + (counts.running || 0) + " · 完成 " + (counts.completed || 0) + " · 跳过 " + (counts.skipped || 0) + " · 失败/中断 " + ((counts.failed || 0) + (counts.interrupted || 0));
+  taskCounts.textContent = "排队 " + (counts.queued || 0) + " · 运行 " + (counts.running || 0);
   const signature = JSON.stringify((data.tasks || []).map(task => [task.id, task.status]));
   if (taskSignature === null || taskSignature !== signature || data.changed) loadPapers(currentPage).catch(error => { message.textContent = error.message; });
   taskSignature = signature;
-  taskList.replaceChildren();
-  for (const task of data.tasks || []) {
-    const item = document.createElement("li");
-    item.dataset.status = task.status;
-    const heading = document.createElement("strong");
-    heading.textContent = (taskStates[task.status] || task.status) + " · " + (taskLabels[task.action] || task.action);
-    const name = document.createElement("span"); name.className = "task-paper-name"; name.textContent = task.title || task.filename;
-    const age = document.createElement("span"); age.className = "task-age"; age.textContent = taskDuration(task);
-    item.append(heading, name, age);
-    if (["queued", "running"].includes(task.status)) taskAges.push({task, age});
-    if (task.worker && task.status === "running") { const worker = document.createElement("small"); worker.textContent = task.worker; item.append(worker); }
-    if (task.error) { const error = document.createElement("p"); error.className = "task-error"; error.textContent = task.error; item.append(error); }
-    if (task.status === "queued" || ["failed", "interrupted", "cancelled"].includes(task.status)) {
-      const control = document.createElement("button"); control.type = "button"; control.textContent = task.status === "queued" ? "取消" : "重试";
-      control.addEventListener("click", async () => {
-        control.disabled = true;
-        try { await requestJson("/api/tasks/" + encodeURIComponent(task.id) + "/" + (task.status === "queued" ? "cancel" : "retry"), { method: "POST" }); }
-        catch (error) { message.textContent = error.message; control.disabled = false; }
-      });
-      item.append(control);
-    }
-    if (["completed", "failed", "interrupted"].includes(task.status)) {
-      const detail = document.createElement("button"); detail.type = "button"; detail.textContent = "查看结果";
-      detail.addEventListener("click", () => showTaskResult(task.id).catch(error => { message.textContent = error.message; }));
-      item.append(detail);
-    }
-    taskList.append(item);
-  }
-  if (!(data.tasks || []).length) {
-    const empty = document.createElement("li"); empty.textContent = "暂无后台任务"; taskList.append(empty);
-  }
 }
 
 let taskEventSource;
@@ -562,11 +522,6 @@ function connectTaskEvents() {
 }
 window.addEventListener("pagehide", () => { taskEventSource?.close(); taskEventSource = null; });
 window.addEventListener("pageshow", () => connectTaskEvents());
-// Refresh elapsed labels locally, without making any status requests.
-const taskAgeTimer = setInterval(() => {
-  for (const {task, age} of taskAges) age.textContent = taskDuration(task);
-}, 1000);
-taskAgeTimer?.unref?.();
 
 async function runBulkAction(action) {
   if (bulkInProgress || !selectedPapers.size) return;
@@ -830,3 +785,9 @@ paperForm.addEventListener("submit", async (event) => {
 
 loadPapers().catch((error) => { message.textContent = error.message; });
 connectTaskEvents();
+
+async function showLinkedTaskResult() {
+  const taskId = new URLSearchParams(window.location?.search || "").get("task");
+  if (taskId) await showTaskResult(taskId);
+}
+showLinkedTaskResult().catch(error => { message.textContent = error.message; });

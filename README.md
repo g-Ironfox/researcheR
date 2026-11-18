@@ -64,6 +64,7 @@ OCR 完成后，在论文列表点击 **生成 Markdown** 会打开 Markdown 阅
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.dev.yml exec webui python -m unittest discover -s tests -v
 node webui/tests/test_reference_ui.mjs
+node webui/tests/test_tasks_ui.mjs
 ```
 
 ## 自动提取标题和摘要
@@ -76,7 +77,7 @@ node webui/tests/test_reference_ui.mjs
 
 `.env` 中可设置 `TASK_WORKERS=3` 控制独立 worker 容器内部的并发数（1 到 32）。当前部署使用一个 worker 容器、内部 N 个并发执行单元，不支持通过多个 worker 容器副本扩容；修改并发数后需重建容器，开发模式修改 worker Python 代码后需重启 worker。API 与 worker 共用 Redis 队列和上传目录；启动或更新时使用 `docker compose up -d --build`。
 
-在论文列表勾选多篇论文，可跨分页保留选择；**全选本页**只选择当前筛选结果的当前页。选择后可依次执行 **OCR**、**提取参考文献** 或 **转 Markdown**。批量任务会立即写入 Redis 后台队列，并显示每篇的排队状态；独立 worker 容器按 `TASK_WORKERS` 并发处理。首页“后台任务”区域显示当前运行数、排队数、worker 名称、耗时和失败原因，支持取消排队任务及重试失败任务。关闭浏览器不会中断任务。
+在论文列表勾选多篇论文，可跨分页保留选择；**全选本页**只选择当前筛选结果的当前页。选择后可依次执行 **OCR**、**提取参考文献** 或 **转 Markdown**。批量任务会立即写入 Redis 后台队列，并显示每篇的排队状态；独立 worker 容器按 `TASK_WORKERS` 并发处理。顶部“后台任务”入口打开独立的 `/tasks` 页面，显示当前运行数、排队数、worker 名称、耗时和失败原因，支持取消排队任务、重试失败任务及查看结果。提取结果可返回论文库填入编辑窗口，检查后保存。关闭浏览器不会中断任务。
 
 批量 OCR 跳过已有成功 OCR 的论文（包括完整或部分结果）；失败或未配置结果可以重试。参考文献提取跳过已有结构化条目的论文，成功后自动保存且保留其他论文信息。Markdown 跳过已有 Markdown 或没有可用 OCR 的论文。上传论文也会自动加入 OCR 队列。服务重启时正在执行的任务标为中断，不自动重试；可从任务面板手动重试。OCR 和模型请求可能产生 API 用量。
 

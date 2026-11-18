@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>后台任务 · researcheR</title>
+  <link rel="stylesheet" href="/static/styles.css?v=32">
+  <script src="/static/tasks.js?v=1" defer></script>
+</head>
+<body>
+  <header>
+    <div class="header-inner">
+      <h1>researcheR</h1>
+      <span class="header-note">个人文献管理</span>
+      <nav class="site-nav" aria-label="主导航">
+        <a href="/">论文库</a>
+        <a href="/tasks" aria-current="page">后台任务</a>
+      </nav>
+    </div>
+  </header>
+  <main class="tasks-page">
+    <section aria-labelledby="tasks-heading">
+      <div class="tasks-page-heading">
+        <div>
+          <h2 id="tasks-heading">后台任务</h2>
+          <p class="tasks-help">查看排队、运行中的任务及最近的任务记录。离开此页面后，任务仍会继续执行。</p>
+        </div>
+        <p id="task-connection" class="task-connection" role="status" data-state="connecting">正在连接实时更新…</p>
+      </div>
+      <p id="task-message" role="status" aria-live="polite"></p>
+      <div class="task-panel">
+        <div class="task-panel-heading"><h3>任务列表</h3><span id="task-counts" aria-live="polite">等待任务状态…</span></div>
+        <ul id="task-list" aria-label="后台任务列表" aria-live="polite"><li>正在加载后台任务…</li></ul>
+      </div>
+    </section>
+  </main>
+  <dialog id="task-result-dialog" aria-labelledby="task-result-title">
+    <div class="dialog-heading"><h2 id="task-result-title">任务结果</h2><button type="button" class="close-button" id="close-task-result" aria-label="关闭任务结果">×</button></div>
+    <p id="task-result-status"></p>
+    <pre id="task-result-content"></pre>
+    <a id="apply-task-result" class="task-result-link" href="/" hidden>返回论文库填入编辑窗口</a>
+    <p class="references-help">单篇提取结果可返回论文库填入编辑窗口，检查后保存。批量提取的参考文献会自动保存。</p>
+  </dialog>
+</body>
+</html>

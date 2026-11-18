@@ -9,6 +9,21 @@ import app as papers_app
 
 
 class TaskEventEndpointTests(unittest.IsolatedAsyncioTestCase):
+    async def test_standalone_task_page_and_library_result_link(self):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=papers_app.app), base_url="http://test") as client:
+            page = await client.get("/tasks")
+            script = await client.get("/static/tasks.js")
+            library = await client.get("/?task=some-task")
+        self.assertEqual(page.status_code, 200)
+        self.assertTrue(page.headers["content-type"].startswith("text/html"))
+        self.assertIn('id="task-list"', page.text)
+        self.assertIn('/static/tasks.js', page.text)
+        self.assertEqual(script.status_code, 200)
+        self.assertEqual(library.status_code, 200)
+        self.assertIn('href="/tasks"', library.text)
+        self.assertNotIn('id="task-list"', library.text)
+        self.assertIn('id="apply-task-result"', library.text)
+
     async def test_stream_route_headers_snapshot_heartbeat_and_update(self):
         snapshot = {"tasks": [], "counts": {"running": 0}, "workers": 3}
 

@@ -75,6 +75,11 @@ async def index() -> FileResponse:
     return FileResponse(Path(__file__).parent / "static" / "index.html")
 
 
+@app.get("/tasks")
+async def tasks_page() -> FileResponse:
+    return FileResponse(Path(__file__).parent / "static" / "tasks.html")
+
+
 @app.get("/read/{filename}")
 async def read_paper(filename: str) -> FileResponse:
     get_paper_path(filename)

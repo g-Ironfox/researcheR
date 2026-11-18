@@ -4,14 +4,18 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>researcheR</title>
-  <link rel="stylesheet" href="/static/styles.css?v=31">
-  <script src="/static/app.js?v=27" defer></script>
+  <link rel="stylesheet" href="/static/styles.css?v=32">
+  <script src="/static/app.js?v=28" defer></script>
 </head>
 <body>
   <header>
     <div class="header-inner">
       <h1>researcheR</h1>
       <span class="header-note">个人文献管理</span>
+      <nav class="site-nav" aria-label="主导航">
+        <a href="/" aria-current="page">论文库</a>
+        <a href="/tasks">后台任务 <span id="task-counts" aria-live="polite">连接中…</span></a>
+      </nav>
     </div>
   </header>
   <main>
@@ -53,10 +57,6 @@
         </div>
       </div>
       <ul id="paper-list" aria-label="论文列表"></ul>
-      <section class="task-panel" aria-labelledby="task-panel-title">
-        <div class="task-panel-heading"><h3 id="task-panel-title">后台任务</h3><span id="task-counts" aria-live="polite"></span></div>
-        <ul id="task-list" aria-live="polite"></ul>
-      </section>
       <section id="bulk-progress" class="bulk-progress" aria-live="polite" hidden>
         <div class="bulk-progress-heading"><strong id="bulk-progress-title"></strong><button type="button" id="clear-bulk-progress" aria-label="清除批量操作结果">清除</button></div>
         <ul id="bulk-results"></ul>

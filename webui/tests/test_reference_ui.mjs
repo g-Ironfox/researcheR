@@ -418,7 +418,8 @@ export async function runReferenceUiTests() {
 
   const resultTask = {id: 'task-result-metadata', filename: 'third.pdf', title: 'Third paper', action: 'metadata', status: 'completed', result: {title: 'Recovered title', abstract: 'Recovered abstract'}};
   taskValues.set(resultTask.id, resultTask);
-  await context.showTaskResult(resultTask.id);
+  context.window.location = {search: "?task=" + encodeURIComponent(resultTask.id)};
+  await context.showLinkedTaskResult();
   assert.equal(query('#task-result-dialog').open, true);
   assert.ok(query('#task-result-content').textContent.includes('Recovered abstract'));
   assert.equal(query('#apply-task-result').hidden, false);
@@ -446,12 +447,8 @@ export async function runReferenceUiTests() {
     {...resultTask, id: 'failed', status: 'failed', error: 'Provider unavailable'},
   ]};
   streams.at(-1).emit(queueListing);
-  const taskRows = query('#task-list').children;
-  assert.equal(taskRows.length, 3);
-  assert.ok(taskRows[0].children.some(child => child.textContent === 'worker-2'));
-  assert.ok(taskRows[1].children.some(child => child.textContent === '取消'));
-  assert.ok(taskRows[2].children.some(child => child.textContent === '重试'));
-  assert.ok(taskRows[2].children.some(child => child.textContent === 'Provider unavailable'));
+  assert.equal(query('#task-counts').textContent, '排队 1 · 运行 1');
+  assert.equal(elements.has('#task-list'), false, 'The library must not render the task list');
   checks++;
 
   const tick = async () => { for (let index = 0; index < 12; index++) await Promise.resolve(); };
